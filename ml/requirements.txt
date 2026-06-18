@@ -1,0 +1,13 @@
+torch
+torchvision
+transformers
+datasets
+scikit-learn
+pandas
+numpy
+onnx
+onnxruntime
+sentence-transformers
+accelerate
+evaluate
+pyarrow

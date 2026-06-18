@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+backend/.venv/
+
+# ML artifacts (large — train locally)
+ml/models/
+ml/data/raw/*
+!ml/data/raw/.gitkeep
+ml/data/processed/*
+!ml/data/processed/.gitkeep
+
+# ONNX model (train and copy locally)
+backend/models/classifier.onnx
+backend/models/tokenizer/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# App data (local only)
+*.db
+*.db-*
