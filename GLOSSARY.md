@@ -14,6 +14,10 @@ _Avoid_: Card (a credit card is one kind of Account)
 One document from a bank listing an Account's Transactions for a billing period, as printed on the Statement. A Statement is identified by its Account and billing period; importing the same period again replaces it.
 _Avoid_: Bill, PDF, file
 
+**Export**:
+A CSV, OFX or QFX file a bank offers for download in place of a PDF Statement. Importing one creates a Statement like a PDF does; an OFX/QFX file names its Account and billing period, but a CSV usually names neither, so the user gives them.
+_Avoid_: Download, CSV statement
+
 ### Money movement
 
 **Transaction**:

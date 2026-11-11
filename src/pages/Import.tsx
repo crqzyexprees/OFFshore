@@ -75,7 +75,7 @@ export function Import({ accounts }: ImportProps) {
       ) : (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-ink-soft mb-1">Statement PDF</label>
+            <label className="block text-sm font-medium text-ink-soft mb-1">Statement (PDF, CSV, OFX or QFX)</label>
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
@@ -106,7 +106,7 @@ export function Import({ accounts }: ImportProps) {
                 <>
                   <Upload size={28} className="text-faint" />
                   <span className="text-ink-soft">
-                    Drop a PDF here or <span className="text-indigo-600 dark:text-indigo-400 font-medium">browse</span>
+                    Drop a statement here or <span className="text-indigo-600 dark:text-indigo-400 font-medium">browse</span>
                   </span>
                 </>
               )}
@@ -114,7 +114,7 @@ export function Import({ accounts }: ImportProps) {
             <input
               ref={inputRef}
               type="file"
-              accept="application/pdf,.pdf"
+              accept="application/pdf,.pdf,.csv,.ofx,.qfx"
               onChange={(e) => {
                 pickFile(e.target.files?.[0] ?? null);
                 e.target.value = "";

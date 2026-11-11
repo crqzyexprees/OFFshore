@@ -99,3 +99,16 @@ def test_the_ui_knows_every_import_problem_and_its_fields():
         for m in re.finditer(r'\{\s*problem:\s*"(\w+)";?([^}]*)\}', union)
     }
     assert members == {p.code: set(p.FIELDS) for p in PROBLEMS}
+
+
+def test_csv_export_import_and_unreadable_files(client):
+    account_id = add_card(client)
+    csv = b"Date,Description,Amount\n2025-12-10,SHOES,100.00\n"
+    form = {"account_id": account_id, "period_start": "2025-12-05", "period_end": "2026-01-04"}
+    response = client.post("/api/import", files={"file": ("card.csv", csv)}, data=form)
+    assert response.status_code == 200 and response.json()["imported"] == 1
+
+    response = client.post("/api/import", files={"file": ("card.csv", b"Date,Amount\n")}, data=form)
+    assert response.status_code == 400
+    response = client.post("/api/import", files={"file": ("notes.txt", b"hi")}, data=form)
+    assert response.status_code == 400

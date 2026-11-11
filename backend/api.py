@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from backend import ledger, prediction
 from backend.config import MODEL_DIR
 from backend.db import get_connection, init_db
-from backend.statement_import import BANKS, ImportProblem, import_statement, read_pdf
+from backend.statement_import import BANKS, ImportProblem, import_statement, is_export, read_export, read_pdf
 from backend.vocabulary import ACCOUNT_KINDS, CATEGORIES, CATEGORIZED_KINDS, KINDS
 
 predictor: prediction.CategoryPredictor = prediction.NoModel()
@@ -168,16 +168,22 @@ def import_statement_route(
 ):
     file_name = Path(file.filename or "statement.pdf").name
     data = file.file.read()
-    if Path(file_name).suffix.lower() != ".pdf" or not data.startswith(b"%PDF"):
-        raise HTTPException(status_code=400, detail="The file is not a PDF")
     if (period_start is None) != (period_end is None):
         raise HTTPException(status_code=400, detail="Give both ends of the billing period")
     period = (period_start, period_end) if period_start and period_end else None
 
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / file_name
-        path.write_bytes(data)
-        document = read_pdf(path)
+    if is_export(file_name):
+        try:
+            document = read_export(data, file_name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    elif Path(file_name).suffix.lower() == ".pdf" and data.startswith(b"%PDF"):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / file_name
+            path.write_bytes(data)
+            document = read_pdf(path)
+    else:
+        raise HTTPException(status_code=400, detail="The file is not a PDF, CSV, OFX or QFX file")
 
     with closing(get_connection()) as conn:
         try:

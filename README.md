@@ -7,6 +7,7 @@ A fully local desktop app (**Tauri + React** UI, **Python** backend) that reads 
 ## Features
 
 - **PDF import** — finds the Account, billing period and Transactions; bad lines are reported, never silently stored
+- **CSV / OFX / QFX import** — bank Exports; OFX files name their Account and period, CSV files ask for them
 - **On-device Category prediction** — a small sentence-embedding model (MiniLM, ONNX Runtime) matches each transaction to its most similar labelled example, your own corrections first
 - **SQLite storage** — Accounts, transactions, duplicate statement detection
 - **Spending dashboard** — Category breakdown with donut chart
@@ -137,7 +138,7 @@ supported and used when no embedding model is installed; see
 | GET | `/api/transactions` | List Transactions (filters: `account_id`, `month`, `category`, `kind`) |
 | GET | `/api/spending/{month}` | Spending per Category (Purchases − Refunds) and cash withdrawn |
 | POST | `/api/transactions/{id}/override` | Set or clear the Override (`kind`, `category`) |
-| POST | `/api/import` | Import a Statement (multipart: `file`, optional `account_id`, `period_start`, `period_end`) |
+| POST | `/api/import` | Import a Statement — PDF, CSV, OFX or QFX (multipart: `file`, optional `account_id`, `period_start`, `period_end`) |
 
 An import the backend can't complete on its own returns `422` with a `problem` code:
 `needs_account`, `needs_period`, `account_mismatch` or `no_transactions`. Nothing is stored.

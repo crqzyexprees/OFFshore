@@ -13,12 +13,16 @@ from datetime import date
 
 from backend.prediction import CategoryPredictor, NoModel
 from backend.statement_import.document import Document, Page, read_pdf
+from backend.statement_import.exports import Export, ExportRow, is_export, read_export
 from backend.statement_import.kinds import OtherAccounts, decide_kind
-from backend.statement_import.reading import BANKS, detect_bank, find_last_four, find_period, read_rows
+from backend.statement_import.reading import (
+    _EARLIEST_BEFORE_PERIOD, _LATEST_AFTER_PERIOD, BANKS, Row, detect_bank, find_last_four, find_period, read_rows,
+)
 from backend.vocabulary import has_category
 
 __all__ = [
-    "BANKS", "Document", "Page", "read_pdf", "import_statement",
+    "BANKS", "Document", "Page", "read_pdf", "Export", "ExportRow", "is_export", "read_export",
+    "import_statement",
     "ImportResult", "ImportProblem", "NeedsAccount", "NeedsPeriod",
     "AccountMismatch", "NoTransactions", "PROBLEMS",
 ]
@@ -102,17 +106,18 @@ class ImportResult:
 
 def import_statement(
     conn: sqlite3.Connection,
-    document: Document,
+    document: Document | Export,
     *,
     account_id: int | None = None,
     period: tuple[date, date] | None = None,
     predictor: CategoryPredictor = NoModel(),
 ) -> ImportResult:
-    bank = detect_bank(document)
-    last_four = find_last_four(document)
+    exported = isinstance(document, Export)
+    bank = document.bank if exported else detect_bank(document)
+    last_four = document.last_four if exported else find_last_four(document)
     account = _resolve_account(conn, account_id, bank, last_four)
 
-    period = period or find_period(document)
+    period = period or (document.period if exported else find_period(document))
     if period is None:
         raise NeedsPeriod(
             "The billing period isn't printed in a form we recognise. Enter it to continue.",
@@ -123,7 +128,10 @@ def import_statement(
         raise ImportProblem("The billing period ends before it starts.")
 
     others = _other_accounts(conn, account["id"])
-    rows, rejected = read_rows(document, period, account["kind"])
+    if exported:
+        rows, rejected = _export_rows(document, period, account["kind"])
+    else:
+        rows, rejected = read_rows(document, period, account["kind"])
     kinds = [decide_kind(row.description, row.direction, account["kind"], others) for row in rows]
     categorized = [(row.description, row.cents, kind, row.date) for row, kind in zip(rows, kinds) if has_category(kind)]
     predictions = iter(predictor.predict_many(categorized))
@@ -151,6 +159,21 @@ def import_statement(
         rejected=rejected,
         unmatched_overrides=unmatched,
     )
+
+
+def _export_rows(export: Export, period, account_kind) -> tuple[list[Row], list[dict]]:
+    """An Export's rows inside the billing period, with the same allowance for
+    late-posting Transactions as a PDF; rows outside it belong to another
+    Statement and are rejected so two Exports can't store them twice."""
+    start, end = period
+    earliest, latest = start - _EARLIEST_BEFORE_PERIOD, end + _LATEST_AFTER_PERIOD
+    rows, rejected = [], list(export.rejected)
+    for row, direction in zip(export.rows, export.directions(account_kind)):
+        if earliest <= row.date <= latest:
+            rows.append(Row(row.date, row.description, row.cents, direction))
+        else:
+            rejected.append({"line": row.source, "reason": f"date {row.date.isoformat()} is outside the billing period"})
+    return rows, rejected
 
 
 def _resolve_account(conn, account_id, bank, last_four) -> sqlite3.Row:
