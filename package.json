@@ -2,33 +2,34 @@
   "name": "finance-app",
   "private": false,
   "version": "0.1.0",
-  "description": "Local credit card transaction classifier — Electron + Python",
-  "main": "electron/main.cjs",
+  "description": "Local credit card transaction classifier — Python + React",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"npm run dev:backend\" \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev": "concurrently -k -n api,vite \"npm run dev:backend\" \"npm run dev:vite\"",
     "dev:backend": ".venv/bin/python -m backend",
     "dev:vite": "vite",
-    "dev:electron": "wait-on http://127.0.0.1:1420 http://127.0.0.1:18765/health && electron .",
+    "app:dev": "tauri dev",
+    "app:build": "packaging/build-linux.sh",
     "build": "tsc && vite build",
-    "start": "npm run build && electron .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "lucide-react": "^0.469.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "recharts": "^2.15.4"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.11",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "concurrently": "^9.2.0",
-    "electron": "^35.1.5",
     "tailwindcss": "^4.1.11",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "wait-on": "^8.0.3"
+    "vite": "^7.0.4"
   }
 }

@@ -1,3 +1,5 @@
+"""Source dataset codes mapped onto the curated Categories (backend/vocabulary.py)."""
+
 MCC_TO_CATEGORY = {
     5411: "Groceries",
     5412: "Groceries",
@@ -9,9 +11,9 @@ MCC_TO_CATEGORY = {
     5812: "Dining",
     5813: "Dining",
     5814: "Dining",
-    5541: "Gas",
-    5542: "Gas",
-    5172: "Gas",
+    5541: "Transport",
+    5542: "Transport",
+    5172: "Transport",
     4111: "Transport",
     4112: "Transport",
     4121: "Transport",
@@ -59,9 +61,9 @@ MCC_TO_CATEGORY = {
     8050: "Health",
     8062: "Health",
     8099: "Health",
-    7941: "Health & Fitness",
-    7991: "Health & Fitness",
-    7997: "Health & Fitness",
+    7941: "Health",
+    7991: "Health",
+    7997: "Health",
     5815: "Entertainment",
     5816: "Entertainment",
     5817: "Entertainment",
@@ -100,12 +102,12 @@ MCC_TO_CATEGORY = {
     7295: "Kids & Pets",
     742: "Kids & Pets",
     5995: "Kids & Pets",
-    6011: "ATM/Cash",
-    6010: "ATM/Cash",
-    6012: "ATM/Cash",
-    6051: "Transfers",
-    6540: "Transfers",
-    4829: "Transfers",
+    6011: None,
+    6010: None,
+    6012: None,
+    6051: None,
+    6540: None,
+    4829: None,
     6300: "Insurance",
     6381: "Insurance",
     8220: "Education",
@@ -119,13 +121,13 @@ SPARKOV_TO_CATEGORY = {
     "grocery_pos": "Groceries",
     "grocery_net": "Groceries",
     "food_dining": "Dining",
-    "gas_transport": "Gas & Transport",
+    "gas_transport": "Transport",
     "shopping_pos": "Shopping",
     "shopping_net": "Shopping",
     "misc_pos": "Other",
     "misc_net": "Other",
     "entertainment": "Entertainment",
-    "health_fitness": "Health & Fitness",
+    "health_fitness": "Health",
     "pharmacy": "Pharmacy",
     "personal_care": "Personal Care",
     "home": "Home",
@@ -134,4 +136,8 @@ SPARKOV_TO_CATEGORY = {
     "travel": "Travel",
 }
 
-ALL_CATEGORIES = sorted(set(MCC_TO_CATEGORY.values()) | set(SPARKOV_TO_CATEGORY.values()))
+# None marks codes that aren't Purchases at all (ATM, money transfers); those
+# rows are dropped rather than taught as a Category.
+ALL_CATEGORIES = sorted(
+    {c for c in (*MCC_TO_CATEGORY.values(), *SPARKOV_TO_CATEGORY.values()) if c is not None}
+)

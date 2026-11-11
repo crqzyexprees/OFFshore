@@ -1,35 +1,24 @@
-import sqlite3
-from pathlib import Path
+"""Writes the user's hand-set Categories to data/processed/corrections.parquet.
+
+The file is rewritten each time (never appended to), and train.py reads it
+alongside combined.parquet, so re-running either script never duplicates or
+loses corrections.
+"""
 
 import pandas as pd
 
-DB_PATH = Path.home() / ".local" / "share" / "finance-app" / "finance.db"
-OUT_PARQUET = "data/processed/combined.parquet"
+import _paths  # noqa: F401
+from backend import ledger
+from backend.config import DB_PATH
+from backend.db import connect
 
-conn = sqlite3.connect(DB_PATH)
-corrections = pd.read_sql_query(
-    """
-    SELECT description, manual_category as category
-    FROM transactions
-    WHERE manually_overridden = 1
-    """,
-    conn,
-)
+OUT = "data/processed/corrections.parquet"
+
+conn = connect(DB_PATH)
+rows = ledger.corrections(conn)
 conn.close()
 
-if corrections.empty:
-    print("No manual corrections found.")
-    raise SystemExit(0)
-
-new_data = corrections.rename(columns={"description": "merchant_text"})
-new_data["amount"] = 0.0
-new_data["hour"] = 12.0
-new_data["day_of_week"] = 3.0
-new_data["month"] = 6.0
-new_data["use_chip"] = "unknown"
-new_data["use_chip_enc"] = 3
-
-existing = pd.read_parquet(OUT_PARQUET)
-updated = pd.concat([existing, new_data], ignore_index=True)
-updated.to_parquet(OUT_PARQUET, index=False)
-print(f"Added {len(new_data)} corrections to training data")
+df = pd.DataFrame(rows, columns=["description", "amount_cents", "kind", "date", "category"])
+df["date"] = pd.to_datetime(df["date"]).dt.date
+df.to_parquet(OUT, index=False)
+print(f"Wrote {len(df)} corrections to {OUT}")

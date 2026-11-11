@@ -1,7 +1,57 @@
 @import "tailwindcss";
 
+/* Dark mode is a class on <html>, set from the user's choice (lib/theme.ts). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic colours: pages use these instead of raw slate/white, so each
+   theme is defined once here. The sidebar is dark in both themes and keeps
+   its own slate classes. */
+@theme {
+  --color-canvas: #f1f5f9; /* page background */
+  --color-surface: #ffffff; /* cards, tables, inputs */
+  --color-surface-muted: #f8fafc; /* table header, row hover */
+  --color-line: #e2e8f0; /* card borders */
+  --color-line-soft: #f1f5f9; /* row dividers */
+  --color-field: #cbd5e1; /* input borders */
+  --color-ink: #0f172a; /* headings, primary text */
+  --color-ink-soft: #334155; /* body text */
+  --color-muted: #64748b; /* secondary text */
+  --color-faint: #94a3b8; /* hints, placeholders */
+}
+
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+  --color-canvas: #020617;
+  --color-surface: #0f172a;
+  --color-surface-muted: #1e293b;
+  --color-line: #1e293b;
+  --color-line-soft: #1e293b;
+  --color-field: #334155;
+  --color-ink: #f1f5f9;
+  --color-ink-soft: #cbd5e1;
+  --color-muted: #94a3b8;
+  --color-faint: #64748b;
+}
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     sans-serif;
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+input,
+select,
+textarea {
+  background-color: var(--color-surface);
+}
+
+option {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
 }

@@ -1,0 +1,3 @@
+# 5. A Statement is identified by Account and billing period
+
+A Statement is identified by its Account and billing period, not by its file contents, and importing the same period again replaces it. Matching on file contents (the obvious approach) treats a re-downloaded copy with a new timestamp as a different Statement and imports its Transactions twice. Replacing also lets a Statement be re-imported after a parser fix. When a Statement is replaced, each Override carries over to the new Transaction with the same date, amount and description, and any that can't be matched are reported to the user rather than dropped silently.

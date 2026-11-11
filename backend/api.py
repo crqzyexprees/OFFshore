@@ -1,106 +1,128 @@
-from contextlib import asynccontextmanager
+import hmac
+import os
+import tempfile
+from contextlib import asynccontextmanager, closing
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
-from backend.classifier import TxClassifier
-from backend.config import HOST, MODEL_DIR, PORT
+from backend import ledger, prediction
+from backend.config import MODEL_DIR
 from backend.db import get_connection, init_db
-from backend.services import import_pdf
+from backend.statement_import import BANKS, ImportProblem, import_statement, read_pdf
+from backend.vocabulary import ACCOUNT_KINDS, CATEGORIES, CATEGORIZED_KINDS, KINDS
 
-classifier: Optional[TxClassifier] = None
+predictor: prediction.CategoryPredictor = prediction.NoModel()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global classifier
-    conn = get_connection()
-    init_db(conn)
-    conn.close()
-
-    if (MODEL_DIR / "classifier.onnx").exists():
-        try:
-            classifier = TxClassifier(MODEL_DIR)
-            print(f"Loaded classifier from {MODEL_DIR}")
-        except Exception as e:
-            print(f"Warning: could not load classifier: {e}")
-            classifier = None
-    else:
-        print(f"No model at {MODEL_DIR / 'classifier.onnx'} — using 'Other' for imports")
-
+    global predictor
+    with closing(get_connection()) as conn:
+        init_db(conn)
+    predictor = prediction.load(MODEL_DIR, corrections=_corrections)
     yield
+
+
+def _corrections() -> list[tuple[str, str]]:
+    """The user's hand-set Categories, which the example predictor learns from."""
+    with closing(get_connection()) as conn:
+        return [(c["description"], c["category"]) for c in ledger.corrections(conn)]
 
 
 app = FastAPI(title="Finance API", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Set by `python -m backend --sidecar`: the Tauri shell launches the backend on a
+# random port and hands this per-launch token to the UI. In browser dev mode
+# (no token) the UI is same-origin through the Vite proxy, so CORS stays off.
+API_TOKEN = os.environ.get("FINANCE_API_TOKEN")
+
+if API_TOKEN:
+
+    @app.middleware("http")
+    async def require_token(request: Request, call_next):
+        auth = request.headers.get("authorization", "")
+        if not hmac.compare_digest(auth, f"Bearer {API_TOKEN}"):
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        return await call_next(request)
+
+    # Added after the token check so it wraps it: CORS preflights (which carry
+    # no token) are answered before the check runs.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["tauri://localhost", "http://tauri.localhost", "http://localhost:1420"],
+        allow_methods=["*"],
+        allow_headers=["authorization", "content-type"],
+    )
+
+# Rejecting foreign Host headers blocks DNS-rebinding attacks.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 
 
 class AccountIn(BaseModel):
-    name: str
+    name: str = Field(min_length=1)
+    kind: str
     bank: str
-    last_four: Optional[str] = None
-    color: Optional[str] = "#6366f1"
+    last_four: Optional[str] = Field(default=None, pattern=r"^\d{4}$")
+    color: str = "#6366f1"
 
 
-class ImportIn(BaseModel):
-    pdf_path: str
-    account_id: int
+class OverrideIn(BaseModel):
+    """Set or clear (null) the Override for a Transaction's kind and Category."""
 
-
-class CategoryOverride(BaseModel):
-    category: str
+    kind: Optional[str] = None
+    category: Optional[str] = None
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_loaded": classifier is not None}
+    return {"status": "ok", "model_loaded": not isinstance(predictor, prediction.NoModel)}
+
+
+@app.get("/api/reference")
+def reference():
+    """The vocabularies the UI offers, as the backend defines them."""
+    return {
+        "banks": [{"id": k, "name": v} for k, v in BANKS.items()],
+        "kinds": [{"id": k, "name": v} for k, v in KINDS.items()],
+        "categorized_kinds": list(CATEGORIZED_KINDS),
+        "account_kinds": [{"id": k, "name": v} for k, v in ACCOUNT_KINDS.items()],
+        "categories": list(CATEGORIES),
+    }
+
+
+def _refused(e: ledger.LedgerError) -> HTTPException:
+    return HTTPException(status_code=404 if isinstance(e, ledger.NotFound) else 400, detail=str(e))
 
 
 @app.get("/api/accounts")
 def get_accounts():
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            "SELECT id, name, bank, last_four, color FROM accounts ORDER BY name"
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+    with closing(get_connection()) as conn:
+        return ledger.accounts(conn)
 
 
 @app.post("/api/accounts")
 def add_account(account: AccountIn):
-    conn = get_connection()
-    try:
-        cur = conn.execute(
-            "INSERT INTO accounts (name, bank, last_four, color) VALUES (?, ?, ?, ?)",
-            (account.name, account.bank, account.last_four, account.color),
-        )
-        conn.commit()
-        return {"id": cur.lastrowid}
-    finally:
-        conn.close()
+    if account.bank not in BANKS:
+        raise HTTPException(status_code=400, detail=f"Unknown bank: {account.bank}")
+    with closing(get_connection()) as conn:
+        try:
+            return {"id": ledger.add_account(conn, **account.model_dump())}
+        except ledger.LedgerError as e:
+            raise _refused(e) from e
 
 
 @app.delete("/api/accounts/{account_id}")
 def delete_account(account_id: int):
-    conn = get_connection()
-    try:
-        conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
-        conn.commit()
-        return {"ok": True}
-    finally:
-        conn.close()
+    with closing(get_connection()) as conn:
+        ledger.delete_account(conn, account_id)
+    return {"ok": True}
 
 
 @app.get("/api/transactions")
@@ -108,84 +130,58 @@ def get_transactions(
     account_id: Optional[int] = None,
     month: Optional[str] = None,
     category: Optional[str] = None,
+    kind: Optional[str] = None,
 ):
-    conn = get_connection()
-    try:
-        query = """SELECT id, account_id, date, description, merchant, amount, tx_type,
-                          category, category_confidence, manually_overridden, manual_category
-                   FROM transactions WHERE tx_type = 'debit'"""
-        params: list = []
-
-        if account_id is not None:
-            params.append(account_id)
-            query += f" AND account_id = ?{len(params)}"
-        if month:
-            params.append(month)
-            query += f" AND strftime('%Y-%m', date) = ?{len(params)}"
-        if category:
-            params.append(category)
-            n = len(params)
-            query += f" AND (category = ?{n} OR manual_category = ?{n})"
-
-        query += " ORDER BY date DESC"
-        rows = conn.execute(query, params).fetchall()
-        return [
-            {
-                **dict(r),
-                "manually_overridden": bool(r["manually_overridden"]),
-            }
-            for r in rows
-        ]
-    finally:
-        conn.close()
+    with closing(get_connection()) as conn:
+        return ledger.transactions(conn, ledger.TransactionFilter(account_id, month, category, kind))
 
 
 @app.get("/api/spending/{month}")
-def get_spending_by_category(month: str):
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """SELECT COALESCE(manual_category, category, 'Other') as cat,
-                      SUM(amount) as total
-               FROM transactions
-               WHERE tx_type = 'debit' AND strftime('%Y-%m', date) = ?
-               GROUP BY cat ORDER BY total DESC""",
-            (month,),
-        ).fetchall()
-        return [[r["cat"], r["total"]] for r in rows]
-    finally:
-        conn.close()
+def get_spending(month: str):
+    """Spending (Purchases minus Refunds) per Category, plus cash withdrawn."""
+    with closing(get_connection()) as conn:
+        result = ledger.spending(conn, month)
+    return {
+        "categories": [{"category": c, "cents": cents} for c, cents in result.by_category.items()],
+        "withdrawn_cents": result.withdrawn_cents,
+    }
 
 
-@app.post("/api/transactions/{tx_id}/category")
-def override_category(tx_id: int, body: CategoryOverride):
-    conn = get_connection()
-    try:
-        conn.execute(
-            "UPDATE transactions SET manual_category = ?, manually_overridden = 1 WHERE id = ?",
-            (body.category, tx_id),
-        )
-        conn.commit()
-        return {"ok": True}
-    finally:
-        conn.close()
+@app.post("/api/transactions/{tx_id}/override")
+def set_override(tx_id: int, body: OverrideIn):
+    with closing(get_connection()) as conn:
+        try:
+            ledger.set_override(conn, tx_id, kind=body.kind, category=body.category, predictor=predictor)
+        except ledger.LedgerError as e:
+            raise _refused(e) from e
+        # A predictor that learns from corrections can now do better elsewhere.
+        updated = ledger.repredict(conn, predictor) if isinstance(predictor, prediction.ExamplePredictor) else 0
+    return {"ok": True, "repredicted": updated}
 
 
 @app.post("/api/import")
-def import_statement(body: ImportIn):
-    path = Path(body.pdf_path)
-    if not path.exists():
-        raise HTTPException(status_code=400, detail=f"File not found: {body.pdf_path}")
-    if path.suffix.lower() != ".pdf":
-        raise HTTPException(status_code=400, detail="File must be a PDF")
+def import_statement_route(
+    file: UploadFile = File(...),
+    account_id: Optional[int] = Form(None),
+    period_start: Optional[date] = Form(None),
+    period_end: Optional[date] = Form(None),
+):
+    file_name = Path(file.filename or "statement.pdf").name
+    data = file.file.read()
+    if Path(file_name).suffix.lower() != ".pdf" or not data.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="The file is not a PDF")
+    if (period_start is None) != (period_end is None):
+        raise HTTPException(status_code=400, detail="Give both ends of the billing period")
+    period = (period_start, period_end) if period_start and period_end else None
 
-    try:
-        result = import_pdf(str(path), body.account_id, classifier)
-        return {
-            "imported": result.imported,
-            "duplicates": result.duplicates,
-            "failed": result.failed,
-            "bank": result.bank,
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / file_name
+        path.write_bytes(data)
+        document = read_pdf(path)
+
+    with closing(get_connection()) as conn:
+        try:
+            result = import_statement(conn, document, account_id=account_id, period=period, predictor=predictor)
+        except ImportProblem as e:
+            raise HTTPException(status_code=422, detail=e.to_json()) from e
+    return result.to_json()

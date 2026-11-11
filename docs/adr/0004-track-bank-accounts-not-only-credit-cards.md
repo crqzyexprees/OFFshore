@@ -1,0 +1,3 @@
+# 4. Track bank Accounts, not only credit cards
+
+The app began as a credit card classifier, but it tracks bank Accounts as well, so that all spending is in one place. This was chosen over keeping a simpler credit-card-only model. The cost is that money entering or leaving an Account is no longer automatically spending: every Transaction is exactly one of Purchase, Refund, Transfer, Income, Withdrawal or Reward, and only Purchases and Refunds count as spending. Money paid to or received from another person defaults to a (Peer) Transfer, so spending paid that way (such as rent by Zelle) must be corrected to a Purchase, by hand or with a Merchant rule.

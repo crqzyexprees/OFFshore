@@ -1,77 +1,127 @@
-# Finance — Local Credit Card Transaction Classifier
+# Finance — Local Spending Tracker
 
-A fully local **Electron + Python** desktop app that parses credit card PDF statements, classifies transactions with an on-device ML model, stores everything in SQLite, and visualizes spending across multiple cards.
+A fully local desktop app (**Tauri + React** UI, **Python** backend) that reads credit card and bank PDF Statements, predicts each transaction's Category on-device (learning from your corrections), stores everything in SQLite, and visualizes spending across your Accounts.
 
 **No cloud. No telemetry. Everything stays on your machine.**
 
 ## Features
 
-- **PDF import** — Chase and generic statement parsers (more banks welcome)
-- **On-device ML** — DistilBERT + numeric features via ONNX Runtime (Python)
+- **PDF import** — finds the Account, billing period and Transactions; bad lines are reported, never silently stored
+- **On-device Category prediction** — a small sentence-embedding model (MiniLM, ONNX Runtime) matches each transaction to its most similar labelled example, your own corrections first
 - **SQLite storage** — Accounts, transactions, duplicate statement detection
 - **Spending dashboard** — Category breakdown with donut chart
-- **Manual overrides** — Correct categories and retrain with your corrections
+- **Credit cards and bank accounts** — every Transaction is a Purchase, Refund, Transfer, Income, Withdrawal or Reward (see [GLOSSARY.md](GLOSSARY.md))
+- **Overrides** — correct a Transaction's kind or Category; re-importing a Statement keeps them
 
 ## Architecture
 
 ```
-Electron (UI shell)
-    ↓ spawns
-Python FastAPI backend (port 18765)
-    ├── pdfplumber PDF parsers
-    ├── onnxruntime classifier
-    └── SQLite database
-    ↑
-React frontend (Vite) — fetch() to local API
+Tauri shell (Rust, src-tauri/)
+    ├── window: React frontend (Vite) rendered by WebKitGTK
+    └── spawns the Python backend as a sidecar process
+          python -m backend --sidecar
+            ├── FastAPI on a random 127.0.0.1 port, per-launch auth token
+            ├── Statement import (pdfplumber)
+            ├── Category prediction (onnxruntime)
+            └── SQLite database
 ```
+
+The shell reads the backend's port and token from its stdout and hands them to the UI.
+The backend exits when the shell does (it watches its stdin), even if the shell crashes.
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Node.js** 18+
-- **Python** 3.10+
+- **Node.js** 18+, **Python** 3.10+, **Rust** (stable, via [rustup](https://rustup.rs))
+- Tauri's Linux build dependencies — on Fedora:
+  `sudo dnf install webkit2gtk4.1-devel openssl-devel librsvg2-devel`
+  (others: see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
 
 ### Install
 
 ```bash
-# Frontend
 npm install
-
-# Python backend
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r backend/requirements.txt
+.venv/bin/pip install -r backend/requirements-dev.txt
 ```
 
-### Run
+### Develop
 
 ```bash
-npm run dev
+npm run app:dev    # desktop app with hot reload (Tauri runs .venv/bin/python as the backend)
+npm run dev        # or: browser only — API + Vite, open http://localhost:1420
 ```
 
-This starts the Python API, Vite dev server, and Electron window together.
-
-The app runs without a trained model — imports default to **Other** until you complete the ML pipeline.
-
-### Train the classifier (optional)
-
-See [ml/README.md](ml/README.md). After training:
+Fetch the embedding model once (23 MB, pinned and checksummed; the package build does this itself):
 
 ```bash
-cp ml/models/classifier.onnx backend/models/
-cp ml/models/categories.json backend/models/
-cp -r ml/models/tokenizer/ backend/models/tokenizer/
+.venv/bin/python -m backend.prediction.fetch
 ```
+
+Without it the app still runs, and Categories default to **Other** until corrected.
+
+### Build the Linux packages
+
+```bash
+npm run app:build
+```
+
+Builds in an Ubuntu 22.04 container with [podman](https://podman.io), so the AppImage runs on
+distros from ~2022 onward regardless of what you build on. Output in `release/`:
+
+| File | Use it on |
+|------|-----------|
+| `Finance_*.AppImage` | Any distro — `chmod +x` and run, or manage it with [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) |
+| `Finance-*.x86_64.rpm` | Fedora — uses the system's WebKit, the most reliable option on NVIDIA |
+| `Finance_*_amd64.deb` | Debian / Ubuntu |
+
+The Python backend is bundled with PyInstaller (`packaging/finance-backend.spec`), so nothing
+needs to be installed on the target machine. The first build takes a while; dependency caches are
+kept in podman volumes (`finance-build-*`) so later builds are faster.
+
+### Graphics problems (blank window, NVIDIA)
+
+WebKitGTK has known rendering bugs with some drivers. The app handles them in layers:
+
+1. **NVIDIA detected** (`/proc/driver/nvidia/version`): sets `__NV_DISABLE_EXPLICIT_SYNC=1` on
+   Wayland or `WEBKIT_DISABLE_DMABUF_RENDERER=1` on X11.
+2. **Safe mode**: if the window hasn't loaded within 12 seconds, the app saves `safe_mode` to
+   `~/.config/dev.offshore.finance/settings.json` and restarts with software rendering. Toggle it
+   under **Settings**, or launch once with `--safe-mode`.
+3. **Native packages**: if the AppImage still misbehaves, use the `.rpm`/`.deb`.
+
+Variables you set yourself are never overridden. The app logs what it applied to stderr:
+`[finance] graphics: nvidia=… wayland=… safe_mode=… set=[…]`.
+
+### How Categories are predicted
+
+Each Purchase or Refund takes the Category of its most similar labelled example
+(`backend/prediction/`): your own corrections first, then a built-in starter set.
+Correcting one transaction re-predicts the others you haven't edited, so the
+rest of that merchant's transactions follow. To measure it on your own data:
+
+```bash
+cd ml && ../.venv/bin/python evaluate.py export labelled.csv   # fix the category column, then:
+../.venv/bin/python evaluate.py score labelled.csv
+```
+
+A trained classifier (`ml/`, needs torch and the Kaggle datasets) is still
+supported and used when no embedding model is installed; see
+[ml/README.md](ml/README.md) and [docs/adr/0006](docs/adr/0006-predict-categories-from-examples.md).
 
 ## Project Structure
 
 ```
-├── electron/          # Electron main process + preload
-├── backend/           # Python FastAPI — DB, ML inference, PDF parsing
-│   ├── parsers/       # Bank-specific PDF parsers
-│   └── models/        # ONNX model artifacts (after training)
+├── src-tauri/         # Tauri shell — window, sidecar management, graphics workarounds
+├── backend/           # Python — FastAPI, DB, ML inference
+│   ├── statement_import/  # Statement import: reading, validation, kinds, replacing
+│   └── models/        # embedding model (fetched) or a trained model bundle
+├── tests/             # pytest (`.venv/bin/python -m pytest`)
+├── docs/adr/          # Architecture decision records
+├── GLOSSARY.md        # Domain language: Account, Statement, Transaction, ...
 ├── src/               # React frontend
+├── packaging/         # Container build, PyInstaller spec, icon source
 └── ml/                # Training pipeline (not required at runtime)
 ```
 
@@ -80,18 +130,23 @@ cp -r ml/models/tokenizer/ backend/models/tokenizer/
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Backend health check |
-| GET | `/api/accounts` | List cards |
-| POST | `/api/accounts` | Add card |
-| DELETE | `/api/accounts/{id}` | Remove card |
-| GET | `/api/transactions` | List transactions |
-| GET | `/api/spending/{month}` | Spending by category |
-| POST | `/api/transactions/{id}/category` | Override category |
-| POST | `/api/import` | Import PDF statement |
+| GET | `/api/reference` | Banks, Transaction kinds and Categories |
+| GET | `/api/accounts` | List Accounts |
+| POST | `/api/accounts` | Add an Account (`kind`: `credit_card` or `bank`) |
+| DELETE | `/api/accounts/{id}` | Remove an Account and its Statements |
+| GET | `/api/transactions` | List Transactions (filters: `account_id`, `month`, `category`, `kind`) |
+| GET | `/api/spending/{month}` | Spending per Category (Purchases − Refunds) and cash withdrawn |
+| POST | `/api/transactions/{id}/override` | Set or clear the Override (`kind`, `category`) |
+| POST | `/api/import` | Import a Statement (multipart: `file`, optional `account_id`, `period_start`, `period_end`) |
+
+An import the backend can't complete on its own returns `422` with a `problem` code:
+`needs_account`, `needs_period`, `account_mismatch` or `no_transactions`. Nothing is stored.
 
 ## Privacy
 
 - All data stored in `~/.local/share/finance-app/finance.db`
 - No network requests at runtime (localhost only)
+- The API listens on `127.0.0.1` only, requires a random per-launch token, and only allows the app's own origin (CORS), so other programs and websites can't use it
 - Your statements never leave your machine
 
 ## License

@@ -1,5 +1,10 @@
 # ML Training Pipeline
 
+> The app predicts Categories from examples by default (docs/adr/0006); a model
+> trained here is only used when no embedding model is installed.
+> `evaluate.py` (scoring the app's predictions on your own labelled data) needs
+> only the backend's dependencies.
+
 Python scripts for training the on-device transaction classifier. **Not shipped with the app.**
 
 ## Setup
@@ -30,19 +35,19 @@ cd data/raw && unzip '*.zip'
 ```bash
 python prepare_data.py
 python train.py
-python export_onnx.py
-
-cp models/classifier.onnx ../backend/models/
-cp models/categories.json ../backend/models/
-cp -r models/tokenizer/ ../backend/models/tokenizer/
+python export_onnx.py --install   # writes models/bundle/ and copies it into backend/models/
 ```
+
+Training encodes every example with `backend.prediction.encode`, the same code
+the app uses, so the two can't drift apart. Change the features there and bump
+`FEATURE_VERSION`: the app refuses a bundle trained on other features.
 
 ## Retraining with User Corrections
 
-After using the app and overriding categories:
+After correcting Categories in the app:
 
 ```bash
-python export_corrections.py
+python export_corrections.py      # rewrites data/processed/corrections.parquet
 python train.py
-python export_onnx.py
+python export_onnx.py --install
 ```

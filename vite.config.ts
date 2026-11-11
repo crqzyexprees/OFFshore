@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-const host = process.env.TAURI_DEV_HOST;
+const API_URL = `http://127.0.0.1:${process.env.FINANCE_API_PORT ?? "18765"}`;
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -11,9 +11,9 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
-    hmr: host
-      ? { protocol: "ws", host, port: 1421 }
-      : undefined,
+    proxy: {
+      "/api": API_URL,
+      "/health": API_URL,
+    },
   },
 });
