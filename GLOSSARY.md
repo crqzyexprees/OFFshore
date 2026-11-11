@@ -57,7 +57,7 @@ Cash taken out of an Account at an ATM. Not Spending; shown as its own total.
 _Avoid_: ATM/Cash, cash advance
 
 **Spending**:
-Purchases minus Refunds, per Category, grouped by the calendar month of each Transaction's date. It can be negative when Refunds exceed Purchases.
+Purchases minus Refunds, per Category, grouped by the calendar month of each Transaction's date, plus the user's Share of Shared Expenses others paid; a Linked Purchase counts as the user's Share. It can be negative when Refunds exceed Purchases.
 _Avoid_: Expenses, outflow, total
 
 ### Categorisation
@@ -73,6 +73,36 @@ _Avoid_: Correction, manual category, edit
 **Merchant rule**:
 A user-defined rule that assigns a kind, a Category, or both to every Transaction whose description matches it, past and future, except Overridden ones.
 _Avoid_: Auto-categorisation, alias
+
+### Sharing
+
+**Person**:
+Someone the user splits costs with. People are kept on this device only; they never sign in.
+_Avoid_: Contact, friend, user
+
+**Group**:
+A named set of People the user often splits with, such as housemates. A Splitwise group imports as one.
+_Avoid_: Team, circle
+
+**Shared Expense**:
+One cost split between the user and one or more People, paid by the user or by one Person. It records the total, who paid, and each Share.
+_Avoid_: Split, bill, Splitwise expense
+
+**Share**:
+The part of a Shared Expense that one person is responsible for. The user's Share is what counts as Spending (docs/adr/0007).
+_Avoid_: Portion, cut, amount owed
+
+**Link**:
+The connection between a Shared Expense the user paid and the Purchase that paid for it. Once linked, that Purchase counts as the user's Share.
+_Avoid_: Match, reconciliation
+
+**Settlement**:
+Money that pays off a Balance between the user and a Person. It changes the Balance, never Spending.
+_Avoid_: Payment, settle-up, repayment
+
+**Balance**:
+What one Person owes the user (positive) or the user owes them (negative), from all Shared Expenses and Settlements between them.
+_Avoid_: Debt, IOU, net
 
 ### Planning
 

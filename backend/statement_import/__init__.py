@@ -222,7 +222,15 @@ def _store(conn, account_id, start, end, file_name, transactions):
             (account_id, start.isoformat(), end.isoformat()),
         ).fetchone()
         overrides = defaultdict(list)
+        links = defaultdict(list)  # Shared Expenses Linked to the old Transactions (docs/adr/0007)
         if old:
+            for r in conn.execute(
+                """SELECT e.id, t.date, t.description, t.amount_cents, t.direction
+                   FROM shared_expenses e JOIN transactions t ON t.id = e.transaction_id
+                   WHERE t.statement_id = ?""",
+                (old["id"],),
+            ):
+                links[(r["date"], r["description"], r["amount_cents"], r["direction"])].append(r["id"])
             for r in conn.execute(
                 """SELECT date, description, amount_cents, direction, override_kind, override_category
                    FROM transactions WHERE statement_id = ?
@@ -242,14 +250,17 @@ def _store(conn, account_id, start, end, file_name, transactions):
             # Identical Transactions (two $4.50 coffees) each take one Override.
             pending = overrides.get((when, description, cents, direction))
             override_kind, override_category = pending.pop(0) if pending else (None, None)
-            conn.execute(
+            new_id = conn.execute(
                 """INSERT INTO transactions
                    (statement_id, account_id, date, description, amount_cents, direction,
                     kind, category, category_confidence, override_kind, override_category)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (statement_id, account_id, when, description, cents, direction,
                  kind, category, confidence, override_kind, override_category),
-            )
+            ).lastrowid
+            linked = links.get((when, description, cents, direction))
+            if linked:
+                conn.execute("UPDATE shared_expenses SET transaction_id = ? WHERE id = ?", (new_id, linked.pop(0)))
 
         unmatched = [
             UnmatchedOverride(*key, o_kind, o_category)

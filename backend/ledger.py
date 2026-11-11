@@ -115,15 +115,11 @@ class Spending:
 
 
 def spending(conn: sqlite3.Connection, month: str) -> Spending:
-    """Spending for one calendar month ("YYYY-MM")."""
-    purchase, refund = CATEGORIZED_KINDS
+    """Spending for one calendar month ("YYYY-MM"), from `spending_items` (db.py)."""
     rows = conn.execute(
-        f"""SELECT effective_category AS category,
-                   SUM(CASE effective_kind WHEN '{purchase}' THEN amount_cents
-                                           ELSE -amount_cents END) AS cents
-            FROM transaction_view
-            WHERE effective_kind IN ({sql_list(CATEGORIZED_KINDS)}) AND strftime('%Y-%m', date) = ?
-            GROUP BY effective_category ORDER BY cents DESC, category""",
+        """SELECT category, SUM(cents) AS cents FROM spending_items
+           WHERE strftime('%Y-%m', date) = ?
+           GROUP BY category ORDER BY cents DESC, category""",
         (month,),
     ).fetchall()
     withdrawn = conn.execute(

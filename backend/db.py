@@ -3,7 +3,7 @@ import sqlite3
 from backend.config import APP_DATA, DB_PATH, move_finance_data
 from backend.vocabulary import ACCOUNT_KINDS, CATEGORIZED_KINDS, FALLBACK_CATEGORY, KINDS, sql_list
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _KIND_CHECK = sql_list(KINDS)
 
@@ -71,6 +71,67 @@ def init_db(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (category, from_month)
         );
 
+        -- Sharing (v4): docs/adr/0007.
+        CREATE TABLE IF NOT EXISTS people (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(trim(name) != ''),
+            note        TEXT,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS groups (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(trim(name) != ''),
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS group_members (
+            group_id   INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            person_id  INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+            PRIMARY KEY (group_id, person_id)
+        );
+
+        -- paid_by NULL means the user paid. A Shared Expense the user paid counts
+        -- once Linked to the Purchase that paid it, or when marked standalone
+        -- (paid outside the tracked Accounts).
+        CREATE TABLE IF NOT EXISTS shared_expenses (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            date              TEXT NOT NULL,
+            description       TEXT NOT NULL,
+            category          TEXT NOT NULL,
+            total_cents       INTEGER NOT NULL CHECK(total_cents > 0),
+            your_share_cents  INTEGER NOT NULL CHECK(your_share_cents >= 0),
+            paid_by           INTEGER REFERENCES people(id) ON DELETE RESTRICT,
+            group_id          INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+            transaction_id    INTEGER UNIQUE REFERENCES transactions(id) ON DELETE SET NULL,
+            standalone        INTEGER NOT NULL DEFAULT 0 CHECK(standalone IN (0, 1)),
+            source_key        TEXT UNIQUE,
+            created_at        TEXT DEFAULT (datetime('now')),
+            CHECK(your_share_cents <= total_cents),
+            CHECK(paid_by IS NULL OR (transaction_id IS NULL AND standalone = 0))
+        );
+
+        -- Other People's Shares of an expense the user paid: what they owe the user.
+        CREATE TABLE IF NOT EXISTS shares (
+            expense_id  INTEGER NOT NULL REFERENCES shared_expenses(id) ON DELETE CASCADE,
+            person_id   INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT,
+            cents       INTEGER NOT NULL CHECK(cents > 0),
+            PRIMARY KEY (expense_id, person_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS settlements (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            date        TEXT NOT NULL,
+            person_id   INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT,
+            cents       INTEGER NOT NULL CHECK(cents > 0),
+            direction   TEXT NOT NULL CHECK(direction IN ('to_them', 'from_them')),
+            note        TEXT,
+            source_key  TEXT UNIQUE,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_shared_expenses_date ON shared_expenses(date);
+
         CREATE INDEX IF NOT EXISTS ix_transactions_account   ON transactions(account_id);
         CREATE INDEX IF NOT EXISTS ix_transactions_statement ON transactions(statement_id);
         CREATE INDEX IF NOT EXISTS ix_transactions_date      ON transactions(date);
@@ -87,6 +148,25 @@ def init_db(conn: sqlite3.Connection) -> None:
                END AS effective_category,
                (t.override_kind IS NOT NULL OR t.override_category IS NOT NULL) AS overridden
         FROM transactions t;
+
+        -- The one definition of what counts as Spending (docs/adr/0007): every
+        -- Purchase and Refund, except that a Linked Purchase counts as the
+        -- user's Share; plus the user's Share of Shared Expenses someone else
+        -- paid or that were paid outside the tracked Accounts.
+        DROP VIEW IF EXISTS spending_items;
+        CREATE VIEW spending_items AS
+        SELECT t.date, t.effective_category AS category,
+               CASE WHEN e.id IS NOT NULL THEN e.your_share_cents
+                    WHEN t.effective_kind = 'purchase' THEN t.amount_cents
+                    ELSE -t.amount_cents END AS cents,
+               t.id AS transaction_id, e.id AS expense_id
+        FROM transaction_view t
+        LEFT JOIN shared_expenses e ON e.transaction_id = t.id AND t.effective_kind = 'purchase'
+        WHERE t.effective_kind IN ({sql_list(CATEGORIZED_KINDS)})
+        UNION ALL
+        SELECT e.date, e.category, e.your_share_cents, NULL, e.id
+        FROM shared_expenses e
+        WHERE e.transaction_id IS NULL AND (e.paid_by IS NOT NULL OR e.standalone = 1);
 
         PRAGMA user_version = {SCHEMA_VERSION};
         """
