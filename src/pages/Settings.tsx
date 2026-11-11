@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Backups } from "../components/Backups";
 import { shell } from "../lib/backend";
 
 export function Settings() {
@@ -55,6 +56,8 @@ export function Settings() {
         )}
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       </div>
+
+      <Backups />
     </div>
   );
 }

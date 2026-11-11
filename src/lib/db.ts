@@ -170,4 +170,21 @@ export const db = {
     }
     return request<ImportResult>("/api/import", { method: "POST", body: form });
   },
+
+  getBackupLocation: () => request<{ directory: string; min_password: number }>("/api/backups"),
+
+  /** No password saves a plain copy; a password saves an encrypted Backup. */
+  saveBackup: (password: string | null) =>
+    request<{ path: string; encrypted: boolean; size: number }>("/api/backups", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+
+  /** Replaces all data with the Backup. `previous` is where the data as it was is saved. */
+  restoreBackup: (file: File, password: string | null) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (password) form.append("password", password);
+    return request<{ previous: string }>("/api/restore", { method: "POST", body: form });
+  },
 };

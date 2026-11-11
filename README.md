@@ -12,6 +12,7 @@ A fully local desktop app (**Tauri + React** UI, **Python** backend) that reads 
 - **SQLite storage** — Accounts, transactions, duplicate statement detection
 - **Spending dashboard** — Category breakdown with donut chart
 - **Credit cards and bank accounts** — every Transaction is a Purchase, Refund, Transfer, Income, Withdrawal or Reward (see [GLOSSARY.md](GLOSSARY.md))
+- **Backups** — save everything to `~/Documents/SplitLens Backups/`, optionally encrypted with a password (scrypt + AES-256-GCM); restoring keeps a copy of the data it replaces
 - **Overrides** — correct a Transaction's kind or Category; re-importing a Statement keeps them
 
 ## Architecture
@@ -138,6 +139,9 @@ supported and used when no embedding model is installed; see
 | GET | `/api/transactions` | List Transactions (filters: `account_id`, `month`, `category`, `kind`) |
 | GET | `/api/spending/{month}` | Spending per Category (Purchases − Refunds) and cash withdrawn |
 | POST | `/api/transactions/{id}/override` | Set or clear the Override (`kind`, `category`) |
+| GET | `/api/backups` | Where Backups are saved |
+| POST | `/api/backups` | Save a Backup (`password` optional; without one it's a plain SQLite copy) |
+| POST | `/api/restore` | Replace all data with a Backup (multipart: `file`, `password` if encrypted) |
 | POST | `/api/import` | Import a Statement — PDF, CSV, OFX or QFX (multipart: `file`, optional `account_id`, `period_start`, `period_end`) |
 
 An import the backend can't complete on its own returns `422` with a `problem` code:
@@ -146,6 +150,7 @@ An import the backend can't complete on its own returns `422` with a `problem` c
 ## Privacy
 
 - All data stored in `~/.local/share/splitlens/splitlens.db` (data from before the rename, in `~/.local/share/finance-app/`, is moved there on first start)
+- Backups without a password are readable by anyone who has the file; encrypted ones need the password, which is never stored
 - No network requests at runtime (localhost only)
 - The API listens on `127.0.0.1` only, requires a random per-launch token, and only allows the app's own origin (CORS), so other programs and websites can't use it
 - Your statements never leave your machine

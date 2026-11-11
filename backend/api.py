@@ -12,8 +12,8 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from backend import ledger, prediction
-from backend.config import MODEL_DIR
+from backend import backup, ledger, prediction
+from backend.config import BACKUP_DIR, MODEL_DIR, SAFETY_DIR
 from backend.db import get_connection, init_db
 from backend.statement_import import BANKS, ImportProblem, import_statement, is_export, read_export, read_pdf
 from backend.vocabulary import ACCOUNT_KINDS, CATEGORIES, CATEGORIZED_KINDS, KINDS
@@ -71,6 +71,12 @@ class AccountIn(BaseModel):
     bank: str
     last_four: Optional[str] = Field(default=None, pattern=r"^\d{4}$")
     color: str = "#6366f1"
+
+
+class BackupIn(BaseModel):
+    """No password: a plain copy. A password: an encrypted Backup."""
+
+    password: Optional[str] = None
 
 
 class OverrideIn(BaseModel):
@@ -191,3 +197,29 @@ def import_statement_route(
         except ImportProblem as e:
             raise HTTPException(status_code=422, detail=e.to_json()) from e
     return result.to_json()
+
+
+@app.get("/api/backups")
+def backup_location():
+    return {"directory": str(BACKUP_DIR), "min_password": backup.MIN_PASSWORD}
+
+
+@app.post("/api/backups")
+def save_backup(body: BackupIn):
+    with closing(get_connection()) as conn:
+        try:
+            saved = backup.save_backup(conn, BACKUP_DIR, body.password or None)
+        except backup.BackupError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"path": str(saved.path), "encrypted": saved.encrypted, "size": saved.size}
+
+
+@app.post("/api/restore")
+def restore_backup(file: UploadFile = File(...), password: Optional[str] = Form(None)):
+    data = file.file.read()
+    with closing(get_connection()) as conn:
+        try:
+            safety = backup.restore_backup(conn, data, SAFETY_DIR, password or None)
+        except backup.BackupError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "previous": str(safety)}

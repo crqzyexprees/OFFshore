@@ -112,3 +112,21 @@ def test_csv_export_import_and_unreadable_files(client):
     assert response.status_code == 400
     response = client.post("/api/import", files={"file": ("notes.txt", b"hi")}, data=form)
     assert response.status_code == 400
+
+
+def test_backup_then_restore(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "BACKUP_DIR", tmp_path / "backups")
+    monkeypatch.setattr(api, "SAFETY_DIR", tmp_path / "safety")
+    add_card(client)
+    saved = client.post("/api/backups", json={"password": "correct horse"}).json()
+    assert saved["encrypted"] and saved["path"].endswith(".splitlens-backup")
+
+    client.delete(f"/api/accounts/{client.get('/api/accounts').json()[0]['id']}")
+    data = Path(saved["path"]).read_bytes()
+    response = client.post("/api/restore", files={"file": ("b", data)}, data={"password": "nope nope"})
+    assert response.status_code == 400 and "Wrong password" in response.json()["detail"]
+    response = client.post("/api/restore", files={"file": ("b", data)}, data={"password": "correct horse"})
+    assert response.status_code == 200
+    assert [a["name"] for a in client.get("/api/accounts").json()] == ["Card"]
+
+    assert client.post("/api/backups", json={"password": "short"}).status_code == 400

@@ -12,6 +12,11 @@ MODEL_DIR = BACKEND_DIR / "models"
 APP_DATA = Path.home() / ".local" / "share" / "splitlens"
 DB_PATH = APP_DATA / "splitlens.db"
 
+# Backups go where the user can find and copy them; the copy taken before each
+# restore stays with the app's data.
+BACKUP_DIR = Path(os.environ.get("SPLITLENS_BACKUP_DIR", Path.home() / "Documents" / "SplitLens Backups"))
+SAFETY_DIR = APP_DATA / "before-restore"
+
 # Before it was renamed SplitLens, the app was called Finance.
 _FINANCE_DATA = Path.home() / ".local" / "share" / "finance-app"
 
