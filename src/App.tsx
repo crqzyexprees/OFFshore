@@ -6,15 +6,17 @@ import { Transactions } from "./pages/Transactions";
 import { Accounts } from "./pages/Accounts";
 import { Import } from "./pages/Import";
 import { Settings } from "./pages/Settings";
+import { Budgets } from "./pages/Budgets";
 import { ThemePreference, useThemePreference } from "./lib/theme";
 import {
-  ArrowLeftRight, LayoutDashboard, LucideIcon, Monitor, Moon, Settings as SettingsIcon, Sun, Upload, Wallet,
+  ArrowLeftRight, LayoutDashboard, Target, LucideIcon, Monitor, Moon, Settings as SettingsIcon, Sun, Upload, Wallet,
 } from "lucide-react";
 
-type Page = "dashboard" | "transactions" | "accounts" | "import" | "settings";
+type Page = "dashboard" | "budgets" | "transactions" | "accounts" | "import" | "settings";
 
 const NAV: { id: Page; label: string; icon: LucideIcon }[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "budgets", label: "Budgets", icon: Target },
   { id: "transactions", label: "Transactions", icon: ArrowLeftRight },
   { id: "accounts", label: "Accounts", icon: Wallet },
   { id: "import", label: "Import", icon: Upload },
@@ -115,6 +117,7 @@ function App() {
 
       <main className="flex-1 overflow-auto">
         {page === "dashboard" && <Dashboard onImport={() => setPage("import")} />}
+        {page === "budgets" && <Budgets />}
         {page === "transactions" && <Transactions accounts={accounts} onImport={() => setPage("import")} />}
         {page === "accounts" && (
           <Accounts accounts={accounts} onChange={loadAccounts} />

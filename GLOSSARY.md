@@ -73,3 +73,9 @@ _Avoid_: Correction, manual category, edit
 **Merchant rule**:
 A user-defined rule that assigns a kind, a Category, or both to every Transaction whose description matches it, past and future, except Overridden ones.
 _Avoid_: Auto-categorisation, alias
+
+### Planning
+
+**Budget**:
+The most a user means to spend in a Category each month, compared with that month's Spending. A Budget applies from the month it is set until it is changed or removed; changing it never changes earlier months.
+_Avoid_: Limit, plan, target

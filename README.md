@@ -12,6 +12,7 @@ A fully local desktop app (**Tauri + React** UI, **Python** backend) that reads 
 - **SQLite storage** — Accounts, transactions, duplicate statement detection
 - **Spending dashboard** — Category breakdown with donut chart
 - **Credit cards and bank accounts** — every Transaction is a Purchase, Refund, Transfer, Income, Withdrawal or Reward (see [GLOSSARY.md](GLOSSARY.md))
+- **Budgets** — a monthly amount per Category, carried forward until you change it, shown against Spending
 - **Backups** — save everything to `~/Documents/SplitLens Backups/`, optionally encrypted with a password (scrypt + AES-256-GCM); restoring keeps a copy of the data it replaces
 - **Overrides** — correct a Transaction's kind or Category; re-importing a Statement keeps them
 
@@ -139,6 +140,8 @@ supported and used when no embedding model is installed; see
 | GET | `/api/transactions` | List Transactions (filters: `account_id`, `month`, `category`, `kind`) |
 | GET | `/api/spending/{month}` | Spending per Category (Purchases − Refunds) and cash withdrawn |
 | POST | `/api/transactions/{id}/override` | Set or clear the Override (`kind`, `category`) |
+| GET | `/api/budgets/{month}` | Each Category's Budget beside its Spending |
+| PUT | `/api/budgets/{month}` | Set a Category's Budget from that month on (`amount_cents`, null removes it) |
 | GET | `/api/backups` | Where Backups are saved |
 | POST | `/api/backups` | Save a Backup (`password` optional; without one it's a plain SQLite copy) |
 | POST | `/api/restore` | Replace all data with a Backup (multipart: `file`, `password` if encrypted) |

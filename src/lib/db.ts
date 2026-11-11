@@ -93,6 +93,13 @@ export interface Reference {
   categories: string[];
 }
 
+/** A Category's Budget (null: none) beside what was spent, for one month. */
+export interface BudgetLine {
+  category: string;
+  budget_cents: number | null;
+  spent_cents: number;
+}
+
 export interface Spending {
   categories: { category: string; cents: number }[];
   withdrawn_cents: number;
@@ -149,6 +156,16 @@ export const db = {
   },
 
   getSpending: (month: string) => request<Spending>(`/api/spending/${month}`),
+
+  getBudgets: (month: string) =>
+    request<{ categories: BudgetLine[] }>(`/api/budgets/${month}`).then((r) => r.categories),
+
+  /** Sets a Category's Budget from `month` on; null removes it from then. */
+  setBudget: (month: string, category: string, amountCents: number | null) =>
+    request<{ ok: true }>(`/api/budgets/${month}`, {
+      method: "PUT",
+      body: JSON.stringify({ category, amount_cents: amountCents }),
+    }),
 
   /**
    * Sets both parts of a Transaction's Override; null clears that part.

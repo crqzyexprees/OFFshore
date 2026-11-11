@@ -79,6 +79,13 @@ class BackupIn(BaseModel):
     password: Optional[str] = None
 
 
+class BudgetIn(BaseModel):
+    """A Category's Budget from a month on; null removes it."""
+
+    category: str
+    amount_cents: Optional[int] = None
+
+
 class OverrideIn(BaseModel):
     """Set or clear (null) the Override for a Transaction's kind and Category."""
 
@@ -151,6 +158,33 @@ def get_spending(month: str):
         "categories": [{"category": c, "cents": cents} for c, cents in result.by_category.items()],
         "withdrawn_cents": result.withdrawn_cents,
     }
+
+
+@app.get("/api/budgets/{month}")
+def get_budgets(month: str):
+    """Every Category with a Budget or Spending this month."""
+    with closing(get_connection()) as conn:
+        try:
+            budgets = ledger.budgets(conn, month)
+        except ledger.LedgerError as e:
+            raise _refused(e) from e
+        spent = ledger.spending(conn, month).by_category
+    names = sorted(set(budgets) | set(spent), key=lambda c: (c not in budgets, -spent.get(c, 0), c))
+    return {
+        "categories": [
+            {"category": c, "budget_cents": budgets.get(c), "spent_cents": spent.get(c, 0)} for c in names
+        ],
+    }
+
+
+@app.put("/api/budgets/{month}")
+def put_budget(month: str, body: BudgetIn):
+    with closing(get_connection()) as conn:
+        try:
+            ledger.set_budget(conn, body.category, month, body.amount_cents)
+        except ledger.LedgerError as e:
+            raise _refused(e) from e
+    return {"ok": True}
 
 
 @app.post("/api/transactions/{tx_id}/override")

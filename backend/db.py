@@ -3,7 +3,7 @@ import sqlite3
 from backend.config import APP_DATA, DB_PATH, move_finance_data
 from backend.vocabulary import ACCOUNT_KINDS, CATEGORIZED_KINDS, FALLBACK_CATEGORY, KINDS, sql_list
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _KIND_CHECK = sql_list(KINDS)
 
@@ -60,6 +60,15 @@ def init_db(conn: sqlite3.Connection) -> None:
             category_confidence  REAL,
             override_kind        TEXT CHECK(override_kind IN ({_KIND_CHECK})),
             override_category    TEXT
+        );
+
+        -- A Budget applies from its month until the next change for its Category;
+        -- a NULL amount ends it. (v3)
+        CREATE TABLE IF NOT EXISTS budgets (
+            category      TEXT NOT NULL,
+            from_month    TEXT NOT NULL CHECK(from_month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'),
+            amount_cents  INTEGER CHECK(amount_cents > 0),
+            PRIMARY KEY (category, from_month)
         );
 
         CREATE INDEX IF NOT EXISTS ix_transactions_account   ON transactions(account_id);

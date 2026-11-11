@@ -5,6 +5,7 @@ Every query over stored Transactions lives here, on top of `transaction_view`
 definitions. Statement import writes Transactions itself (statement_import).
 """
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date
@@ -110,6 +111,53 @@ def spending(conn: sqlite3.Connection, month: str) -> Spending:
         (month,),
     ).fetchone()[0]
     return Spending({r["category"]: r["cents"] for r in rows}, withdrawn)
+
+
+# ── Budgets ─────────────────────────────────────────────────────────────────
+
+_MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def _check_month(month: str) -> None:
+    if not _MONTH.match(month):
+        raise LedgerError(f"Not a month (YYYY-MM): {month}")
+
+
+def budgets(conn: sqlite3.Connection, month: str) -> dict[str, int]:
+    """Each Category's Budget for a month: the latest one set in or before it."""
+    _check_month(month)
+    rows = conn.execute(
+        """SELECT b.category, b.amount_cents FROM budgets b
+           WHERE b.from_month = (SELECT MAX(from_month) FROM budgets
+                                 WHERE category = b.category AND from_month <= ?)""",
+        (month,),
+    )
+    return {r["category"]: r["amount_cents"] for r in rows if r["amount_cents"] is not None}
+
+
+def set_budget(conn: sqlite3.Connection, category: str, month: str, amount_cents: int | None) -> None:
+    """Sets a Category's Budget from `month` on; None ends it. Earlier months
+    keep the Budget they had."""
+    _check_month(month)
+    if category not in CATEGORIES:
+        raise LedgerError(f"Unknown Category: {category}")
+    if amount_cents is not None and amount_cents <= 0:
+        raise LedgerError("A Budget must be more than zero; clear it to remove it.")
+    before = conn.execute(
+        """SELECT amount_cents FROM budgets WHERE category = ? AND from_month < ?
+           ORDER BY from_month DESC LIMIT 1""",
+        (category, month),
+    ).fetchone()
+    if (before["amount_cents"] if before else None) == amount_cents:
+        # Same as the month before: this month just follows it.
+        conn.execute("DELETE FROM budgets WHERE category = ? AND from_month = ?", (category, month))
+    else:
+        conn.execute(
+            """INSERT INTO budgets (category, from_month, amount_cents) VALUES (?, ?, ?)
+               ON CONFLICT (category, from_month) DO UPDATE SET amount_cents = excluded.amount_cents""",
+            (category, month, amount_cents),
+        )
+    conn.commit()
 
 
 # ── Overrides ───────────────────────────────────────────────────────────────

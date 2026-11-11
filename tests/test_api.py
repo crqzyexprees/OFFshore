@@ -130,3 +130,15 @@ def test_backup_then_restore(client, tmp_path, monkeypatch):
     assert [a["name"] for a in client.get("/api/accounts").json()] == ["Card"]
 
     assert client.post("/api/backups", json={"password": "short"}).status_code == 400
+
+
+def test_budgets_beside_spending(client):
+    add_card(client)
+    upload(client, chase("12/10 RESTAURANT 100.00"))
+    assert client.put("/api/budgets/2025-12", json={"category": "Travel", "amount_cents": 50000}).status_code == 200
+    rows = client.get("/api/budgets/2025-12").json()["categories"]
+    assert rows[0] == {"category": "Travel", "budget_cents": 50000, "spent_cents": 0}
+    assert [r["budget_cents"] for r in rows[1:]] == [None] and rows[1]["spent_cents"] == 10000
+
+    assert client.put("/api/budgets/2025-12", json={"category": "Nope", "amount_cents": 1}).status_code == 400
+    assert client.get("/api/budgets/not-a-month").status_code == 400

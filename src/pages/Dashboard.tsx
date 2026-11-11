@@ -1,22 +1,12 @@
 import { useEffect, useState } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { ArrowDownRight, ArrowUpRight, Banknote, ChevronLeft, ChevronRight, PieChart as PieIcon } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Banknote, PieChart as PieIcon } from "lucide-react";
 import { db, Spending } from "../lib/db";
 import { categoryColor, CategoryIcon } from "../lib/categories";
 import { formatMoney } from "../lib/reference";
-import { Card, EmptyState, PageHeader, buttonGhost } from "../components/ui";
-
-const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-
-const shiftMonth = (month: string, by: number) => {
-  const [y, m] = month.split("-").map(Number);
-  return monthKey(new Date(y, m - 1 + by, 1));
-};
-
-const monthLabel = (month: string) => {
-  const [y, m] = month.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
-};
+import { Card, EmptyState, PageHeader } from "../components/ui";
+import { MonthPicker } from "../components/MonthPicker";
+import { monthLabel, shiftMonth, thisMonth } from "../lib/month";
 
 const EMPTY: Spending = { categories: [], withdrawn_cents: 0 };
 
@@ -24,7 +14,7 @@ const EMPTY: Spending = { categories: [], withdrawn_cents: 0 };
 const totalOf = (s: Spending) => s.categories.reduce((sum, c) => sum + c.cents, 0);
 
 export function Dashboard({ onImport }: { onImport: () => void }) {
-  const [month, setMonth] = useState(() => monthKey(new Date()));
+  const [month, setMonth] = useState(thisMonth);
   const [spending, setSpending] = useState<Spending>(EMPTY);
   const [previous, setPrevious] = useState<Spending>(EMPTY);
 
@@ -38,34 +28,12 @@ export function Dashboard({ onImport }: { onImport: () => void }) {
   const ranked = [...spending.categories].sort((a, b) => b.cents - a.cents);
   const largest = Math.max(...ranked.map((c) => c.cents), 1);
   const pieData = ranked.filter((c) => c.cents > 0).map((c) => ({ name: c.category, value: c.cents }));
-  const isCurrent = month === monthKey(new Date());
 
   return (
     <div className="p-6 max-w-6xl">
       <PageHeader
         title="Spending"
-        actions={
-          <>
-            {!isCurrent && (
-              <button className={buttonGhost} onClick={() => setMonth(monthKey(new Date()))}>
-                This month
-              </button>
-            )}
-            <button className={buttonGhost} onClick={() => setMonth(shiftMonth(month, -1))} aria-label="Previous month">
-              <ChevronLeft size={16} />
-            </button>
-            <span className="text-sm font-medium text-ink min-w-32 text-center">{monthLabel(month)}</span>
-            <button
-              className={buttonGhost}
-              onClick={() => setMonth(shiftMonth(month, 1))}
-              disabled={isCurrent}
-              style={isCurrent ? { opacity: 0.4 } : undefined}
-              aria-label="Next month"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </>
-        }
+        actions={<MonthPicker month={month} onChange={setMonth} latest={thisMonth()} />}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
