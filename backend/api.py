@@ -138,6 +138,22 @@ def delete_account(account_id: int):
     return {"ok": True}
 
 
+@app.get("/api/statements")
+def get_statements():
+    with closing(get_connection()) as conn:
+        return ledger.statements(conn)
+
+
+@app.delete("/api/statements/{statement_id}")
+def delete_statement(statement_id: int):
+    with closing(get_connection()) as conn:
+        try:
+            ledger.delete_statement(conn, statement_id)
+        except ledger.LedgerError as e:
+            raise _refused(e) from e
+    return {"ok": True}
+
+
 @app.get("/api/transactions")
 def get_transactions(
     account_id: Optional[int] = None,

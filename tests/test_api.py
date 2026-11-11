@@ -142,3 +142,13 @@ def test_budgets_beside_spending(client):
 
     assert client.put("/api/budgets/2025-12", json={"category": "Nope", "amount_cents": 1}).status_code == 400
     assert client.get("/api/budgets/not-a-month").status_code == 400
+
+
+def test_statements_listed_then_deleted(client):
+    add_card(client)
+    upload(client, chase("12/10 SHOES 100.00", "12/11 HAT 20.00"))
+    [statement] = client.get("/api/statements").json()
+    assert (statement["period_start"], statement["period_end"], statement["transactions"]) == ("2025-12-05", "2026-01-04", 2)
+    assert client.delete(f"/api/statements/{statement['id']}").status_code == 200
+    assert client.get("/api/statements").json() == [] and client.get("/api/transactions").json() == []
+    assert client.delete(f"/api/statements/{statement['id']}").status_code == 404

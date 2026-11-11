@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { db } from "../lib/db";
-import { buttonGhost, buttonPrimary, field } from "./ui";
+import { Card, CardTitle, buttonGhost, buttonPrimary, field } from "./ui";
 
 type Status = { kind: "ok" | "error"; text: string } | null;
 
@@ -67,10 +67,10 @@ export function Backups() {
   };
 
   return (
-    <div className="bg-surface rounded-xl shadow-sm border border-line p-4 space-y-5">
+    <Card className="p-6 space-y-5">
       <div>
-        <h2 className="text-sm font-semibold text-ink">Backups</h2>
-        <p className="text-xs text-muted mt-0.5">
+        <CardTitle>Backups</CardTitle>
+        <p className="text-sm text-muted -mt-2">
           A Backup is a copy of all your Accounts, Statements and corrections.
           {location && <> Saved in <span className="font-mono break-all">{location.directory}</span>.</>}
         </p>
@@ -139,7 +139,7 @@ export function Backups() {
         )}
         {restored && <StatusLine status={restored} />}
       </div>
-    </div>
+    </Card>
   );
 }
 

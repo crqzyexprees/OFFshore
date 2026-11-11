@@ -4,23 +4,21 @@ import { connectBackend, inTauri, reportUiReady, shell } from "./lib/backend";
 import { Dashboard } from "./pages/Dashboard";
 import { Transactions } from "./pages/Transactions";
 import { Accounts } from "./pages/Accounts";
-import { Import } from "./pages/Import";
+import { Statements } from "./pages/Statements";
 import { Settings } from "./pages/Settings";
 import { Budgets } from "./pages/Budgets";
 import { ThemePreference, useThemePreference } from "./lib/theme";
-import {
-  ArrowLeftRight, LayoutDashboard, Target, LucideIcon, Monitor, Moon, Settings as SettingsIcon, Sun, Upload, Wallet,
-} from "lucide-react";
+import { LucideIcon, Monitor, Moon, Sun } from "lucide-react";
 
-type Page = "dashboard" | "budgets" | "transactions" | "accounts" | "import" | "settings";
+type Page = "dashboard" | "personal" | "budgeting" | "statements" | "accounts" | "settings";
 
-const NAV: { id: Page; label: string; icon: LucideIcon }[] = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "budgets", label: "Budgets", icon: Target },
-  { id: "transactions", label: "Transactions", icon: ArrowLeftRight },
-  { id: "accounts", label: "Accounts", icon: Wallet },
-  { id: "import", label: "Import", icon: Upload },
-  ...(inTauri ? [{ id: "settings" as const, label: "Settings", icon: SettingsIcon }] : []),
+const NAV: { id: Page; label: string }[] = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "personal", label: "Personal" },
+  { id: "budgeting", label: "Budgeting" },
+  { id: "statements", label: "Statements" },
+  { id: "accounts", label: "Accounts" },
+  { id: "settings", label: "Settings" },
 ];
 
 // The page lives in the URL hash, so a reload stays on it.
@@ -62,7 +60,7 @@ function App() {
       <div className="min-h-screen bg-canvas flex items-center justify-center">
         {backend === "connecting" ? (
           <div className="flex flex-col items-center gap-3 text-muted">
-            <div className="w-8 h-8 border-4 border-field border-t-indigo-600 rounded-full animate-spin" />
+            <div className="w-8 h-8 border-4 border-field border-t-ink rounded-full animate-spin" />
             <p className="text-sm">Starting…</p>
           </div>
         ) : (
@@ -72,7 +70,7 @@ function App() {
             {/* The shell only launches the backend once, so restart to retry. */}
             <button
               onClick={inTauri ? () => shell.restart() : connect}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium"
+              className="bg-accent hover:bg-accent-hover text-accent-ink px-3 py-1.5 rounded-lg text-sm font-medium"
             >
               {inTauri ? "Restart app" : "Retry"}
             </button>
@@ -83,51 +81,52 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-canvas flex">
-      <nav className="w-52 bg-slate-900 text-white flex flex-col shrink-0 dark:border-r dark:border-line">
-        <div className="px-5 py-5 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center">
-            <Wallet size={18} />
-          </div>
-          <div>
-            <h1 className="text-base font-semibold leading-tight">SplitLens</h1>
-            <p className="text-xs text-slate-400">Local & private</p>
-          </div>
-        </div>
-        <ul className="flex-1 px-3 space-y-0.5">
-          {NAV.map((item) => (
-            <li key={item.id}>
+    <div className="min-h-screen bg-canvas">
+      <header className="sticky top-0 z-30 border-b border-zinc-800 bg-black/95 text-white backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4">
+          <button onClick={() => setPage("dashboard")} className="flex shrink-0 items-center gap-2 text-sm font-semibold">
+            <Logo />
+            SplitLens
+          </button>
+          <nav className="no-scrollbar flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-sm text-zinc-400">
+            {NAV.map((item) => (
               <button
+                key={item.id}
                 onClick={() => setPage(item.id)}
                 aria-current={page === item.id ? "page" : undefined}
-                className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-                  page === item.id
-                    ? "bg-indigo-600 text-white"
-                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                className={`shrink-0 rounded-md px-2.5 py-1.5 leading-none transition-colors ${
+                  page === item.id ? "bg-zinc-800 font-medium text-white" : "hover:bg-zinc-900 hover:text-white"
                 }`}
               >
-                <item.icon size={17} />
                 {item.label}
               </button>
-            </li>
-          ))}
-        </ul>
-        <ThemeSwitch />
-      </nav>
+            ))}
+          </nav>
+          <ThemeSwitch />
+        </div>
+      </header>
 
-      <main className="flex-1 overflow-auto">
-        {page === "dashboard" && <Dashboard onImport={() => setPage("import")} />}
-        {page === "budgets" && <Budgets />}
-        {page === "transactions" && <Transactions accounts={accounts} onImport={() => setPage("import")} />}
-        {page === "accounts" && (
-          <Accounts accounts={accounts} onChange={loadAccounts} />
-        )}
-        {page === "import" && (
-          <Import accounts={accounts} />
-        )}
+      <main className="mx-auto max-w-7xl px-4 py-6">
+        {page === "dashboard" && <Dashboard onImport={() => setPage("statements")} />}
+        {page === "personal" && <Transactions accounts={accounts} onImport={() => setPage("statements")} />}
+        {page === "budgeting" && <Budgets />}
+        {page === "statements" && <Statements accounts={accounts} />}
+        {page === "accounts" && <Accounts accounts={accounts} onChange={loadAccounts} />}
         {page === "settings" && <Settings />}
       </main>
     </div>
+  );
+}
+
+/** Two bars, one bright and one dim: a split. */
+function Logo() {
+  return (
+    <span className="flex h-7 w-7 items-center justify-center rounded-md border border-zinc-700 bg-zinc-950 shadow-sm">
+      <span className="relative block h-4 w-4">
+        <span className="absolute left-0 top-0 h-4 w-1.5 rounded-full bg-white" />
+        <span className="absolute right-0 top-0 h-4 w-1.5 rounded-full bg-zinc-500" />
+      </span>
+    </span>
   );
 }
 
@@ -140,24 +139,22 @@ const THEMES: { id: ThemePreference; label: string; icon: LucideIcon }[] = [
 function ThemeSwitch() {
   const [theme, setTheme] = useThemePreference();
   return (
-    <div className="p-3 border-t border-slate-700">
-      <div className="flex rounded-lg bg-slate-800 p-0.5 text-xs" role="radiogroup" aria-label="Theme">
-        {THEMES.map((t) => (
-          <button
-            key={t.id}
-            role="radio"
-            aria-checked={theme === t.id}
-            onClick={() => setTheme(t.id)}
-            title={t.label}
-            aria-label={t.label}
-            className={`flex-1 flex justify-center rounded-md py-1.5 transition-colors ${
-              theme === t.id ? "bg-slate-600 text-white" : "text-slate-400 hover:text-white"
-            }`}
-          >
-            <t.icon size={15} />
-          </button>
-        ))}
-      </div>
+    <div className="flex shrink-0 rounded-md border border-zinc-700 bg-zinc-950 p-0.5" role="radiogroup" aria-label="Theme">
+      {THEMES.map((t) => (
+        <button
+          key={t.id}
+          role="radio"
+          aria-checked={theme === t.id}
+          onClick={() => setTheme(t.id)}
+          title={`${t.label} theme`}
+          aria-label={`${t.label} theme`}
+          className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+            theme === t.id ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white"
+          }`}
+        >
+          <t.icon size={14} />
+        </button>
+      ))}
     </div>
   );
 }

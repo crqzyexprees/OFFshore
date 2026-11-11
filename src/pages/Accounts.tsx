@@ -2,6 +2,7 @@ import { useState } from "react";
 import { CreditCard, Landmark, Trash2 } from "lucide-react";
 import { db, Account, AccountKind } from "../lib/db";
 import { accountKindName, bankName, useReference } from "../lib/reference";
+import { Card, CardTitle, PageHeader, buttonPrimary, field } from "../components/ui";
 
 const COLORS = [
   "#6366f1",
@@ -66,19 +67,18 @@ export function Accounts({ accounts, onChange }: AccountsProps) {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl">
-      <h1 className="text-2xl font-semibold text-ink">Accounts</h1>
+    <div>
+      <PageHeader title="Accounts" subtitle="The credit cards and bank accounts you upload statements for." />
 
-      <form
-        onSubmit={handleAdd}
-        className="bg-surface rounded-xl shadow-sm border border-line p-4 space-y-3 max-w-md"
-      >
-        <h2 className="text-sm font-medium text-ink-soft">Add an account</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,420px)_1fr] gap-6 items-start">
+      <Card className="p-6">
+      <form onSubmit={handleAdd} className="space-y-3">
+        <CardTitle>Add account</CardTitle>
         <input
           placeholder="Nickname"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-full border border-field rounded-lg px-3 py-2 text-sm"
+          className={`w-full ${field}`}
         />
         <div className="flex gap-2">
           {reference?.account_kinds.map((k) => (
@@ -88,8 +88,8 @@ export function Accounts({ accounts, onChange }: AccountsProps) {
               onClick={() => setKind(k.id)}
               className={`flex-1 inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm ${
                 chosenKind === k.id
-                  ? "border-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300"
-                  : "border-field text-ink-soft"
+                  ? "border-accent bg-accent text-accent-ink"
+                  : "border-line bg-surface text-ink hover:bg-surface-muted"
               }`}
             >
               <AccountKindIcon kind={k.id} size={15} />
@@ -100,7 +100,7 @@ export function Accounts({ accounts, onChange }: AccountsProps) {
         <select
           value={chosenBank ?? ""}
           onChange={(e) => setBank(e.target.value)}
-          className="w-full border border-field rounded-lg px-3 py-2 text-sm"
+          className={`w-full ${field}`}
         >
           {reference?.banks.map((b) => (
             <option key={b.id} value={b.id}>
@@ -113,7 +113,7 @@ export function Accounts({ accounts, onChange }: AccountsProps) {
           value={lastFour}
           onChange={(e) => setLastFour(e.target.value.replace(/\D/g, ""))}
           maxLength={4}
-          className="w-full border border-field rounded-lg px-3 py-2 text-sm"
+          className={`w-full ${field}`}
         />
         <div className="flex gap-2">
           {COLORS.map((c) => (
@@ -131,26 +131,29 @@ export function Accounts({ accounts, onChange }: AccountsProps) {
         </div>
         <button
           type="submit"
-          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg text-sm font-medium"
+          className={`w-full ${buttonPrimary}`}
         >
-          Add Account
+          Add account
         </button>
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       </form>
+      </Card>
 
+      <Card className="p-6">
+      <CardTitle>Your accounts</CardTitle>
       <div className="space-y-2">
         {accounts.length === 0 ? (
-          <p className="text-sm text-muted">No accounts yet — add your first card or bank account above.</p>
+          <p className="text-sm text-muted">No accounts yet. Add your first card or bank account.</p>
         ) : (
           accounts.map((a) => (
             <div
               key={a.id}
-              className="flex items-center justify-between bg-surface rounded-xl shadow-sm border border-line px-4 py-3"
+              className="flex items-center justify-between rounded-xl border border-line px-4 py-3"
             >
               <div className="flex items-center gap-3">
                 <div
                   className="w-9 h-9 rounded-lg flex items-center justify-center text-white"
-                  style={{ backgroundColor: a.color ?? "#6366f1" }}
+                  style={{ backgroundColor: a.color ?? "#71717a" }}
                 >
                   <AccountKindIcon kind={a.kind} size={18} />
                 </div>
@@ -188,6 +191,8 @@ export function Accounts({ accounts, onChange }: AccountsProps) {
             </div>
           ))
         )}
+      </div>
+      </Card>
       </div>
     </div>
   );

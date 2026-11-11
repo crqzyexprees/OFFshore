@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
-import { Target } from "lucide-react";
 import { BudgetLine, db } from "../lib/db";
-import { categoryColor, CategoryIcon } from "../lib/categories";
+import { categoryColor } from "../lib/categories";
 import { formatMoney, useReference } from "../lib/reference";
 import { monthLabel, thisMonth } from "../lib/month";
 import { MonthPicker } from "../components/MonthPicker";
-import { Card, EmptyState, PageHeader, buttonGhost, field } from "../components/ui";
+import { Card, CardTitle, PageHeader, Stat, field } from "../components/ui";
 
-/** "$1,234.5" → 123450; blank → null; anything else → undefined (not a valid amount). */
+/** "$1,234.5" → 123450; blank or zero → null (no Budget); anything else → undefined (invalid). */
 function parseDollars(text: string): number | null | undefined {
   const cleaned = text.replace(/[$,\s]/g, "");
   if (cleaned === "") return null;
@@ -22,14 +21,16 @@ export function Budgets() {
   const reference = useReference();
   const [month, setMonth] = useState(thisMonth);
   const [lines, setLines] = useState<BudgetLine[] | null>(null);
+  const [extra, setExtra] = useState<string[]>([]); // Categories added to the table but not yet budgeted
   const [error, setError] = useState<string | null>(null);
-  const [adding, setAdding] = useState("");
+  const [saved, setSaved] = useState<string | null>(null);
 
   const load = () =>
     db.getBudgets(month).then(setLines, (e) => setError(e instanceof Error ? e.message : String(e)));
 
   useEffect(() => {
     setLines(null);
+    setExtra([]);
     load();
   }, [month]);
 
@@ -38,110 +39,140 @@ export function Budgets() {
     try {
       await db.setBudget(month, category, cents);
       await load();
+      setSaved(category);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
-  const budgeted = (lines ?? []).filter((l) => l.budget_cents != null);
-  const unbudgeted = (lines ?? []).filter((l) => l.budget_cents == null);
-  const totalBudget = budgeted.reduce((sum, l) => sum + (l.budget_cents ?? 0), 0);
+  const rows: BudgetLine[] = [
+    ...(lines ?? []),
+    ...extra.filter((c) => !lines?.some((l) => l.category === c)).map((category) => ({ category, budget_cents: null, spent_cents: 0 })),
+  ];
+  const budgeted = rows.filter((l) => l.budget_cents != null);
+  const planned = budgeted.reduce((sum, l) => sum + (l.budget_cents ?? 0), 0);
   const spentInBudgets = budgeted.reduce((sum, l) => sum + l.spent_cents, 0);
-  const addable = (reference?.categories ?? []).filter((c) => !budgeted.some((l) => l.category === c));
+  const unplanned = rows.filter((l) => l.budget_cents == null).reduce((sum, l) => sum + Math.max(0, l.spent_cents), 0);
+  const addable = (reference?.categories ?? []).filter((c) => !rows.some((l) => l.category === c));
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div>
       <PageHeader
-        title="Budgets"
-        subtitle="A Budget applies from the month you set it until you change it. Empty the amount to remove it from that month on."
+        title="Budgeting"
+        subtitle="Plan monthly category budgets and compare them against your spending. A budget carries forward until you change it."
         actions={<MonthPicker month={month} onChange={setMonth} />}
       />
 
-      {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <Stat label="Planned" value={formatMoney(planned)} caption={`Across ${budgeted.length} ${budgeted.length === 1 ? "category" : "categories"}`} />
+        <Stat
+          label="Remaining"
+          value={formatMoney(planned - spentInBudgets)}
+          tone={planned - spentInBudgets < 0 ? "bad" : undefined}
+          caption={`${formatMoney(spentInBudgets)} spent in budgeted categories`}
+        />
+        <Stat label="Unplanned spending" value={formatMoney(unplanned)} caption="In categories without a budget" />
+      </div>
 
-      {budgeted.length > 0 && (
-        <Card className="p-4 mb-6">
-          <p className="text-sm text-muted">Spent of budgeted in {monthLabel(month)}</p>
-          <p className="text-3xl font-bold text-ink tabular-nums mt-1">
-            {formatMoney(spentInBudgets)} <span className="text-lg font-medium text-muted">of {formatMoney(totalBudget)}</span>
-          </p>
-          <Bar spent={spentInBudgets} budget={totalBudget} color="#6366f1" />
-        </Card>
-      )}
+      <Card className="p-6">
+        <CardTitle
+          actions={
+            <select
+              value=""
+              onChange={(e) => e.target.value && setExtra((x) => [...x, e.target.value])}
+              className={field}
+              aria-label="Add a category"
+            >
+              <option value="">Add a category…</option>
+              {addable.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          }
+        >
+          Monthly budget plan
+        </CardTitle>
 
-      <Card className="divide-y divide-line">
-        {lines === null ? (
-          <p className="p-4 text-sm text-muted">Loading…</p>
-        ) : budgeted.length === 0 ? (
-          <EmptyState icon={<Target size={36} />} title="No Budgets yet"
-            hint="Pick a Category below and give it a monthly amount." />
-        ) : (
-          budgeted.map((line) => <BudgetRow key={line.category} line={line} onSave={save} />)
-        )}
-        <div className="p-4 flex flex-wrap items-center gap-2">
-          <select value={adding} onChange={(e) => setAdding(e.target.value)} className={field}>
-            <option value="">Add a Budget for…</option>
-            {addable.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          {adding && (
-            <AmountInput
-              key={adding}
-              initial={null}
-              autoFocus
-              onCommit={(cents) => {
-                if (cents != null) save(adding, cents).then(() => setAdding(""));
-              }}
-            />
-          )}
+        {error && <p className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-muted bg-surface-muted">
+                <th className="py-3 px-4 font-medium rounded-l-lg">Category</th>
+                <th className="py-3 px-4 font-medium">Planned</th>
+                <th className="py-3 px-4 font-medium">Spent</th>
+                <th className="py-3 px-4 font-medium rounded-r-lg">Remaining</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines === null ? (
+                <tr><td colSpan={4} className="py-6 px-4 text-muted">Loading…</td></tr>
+              ) : rows.length === 0 ? (
+                <tr><td colSpan={4} className="py-6 px-4 text-muted">No spending or budgets in {monthLabel(month)} yet. Add a category to plan one.</td></tr>
+              ) : (
+                rows.map((line) => (
+                  <BudgetRow key={line.category} line={line} saved={saved === line.category} onSave={save} />
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 border-t border-line pt-4 text-sm text-muted">
+          Total planned: <span className="font-semibold text-ink tabular-nums">{formatMoney(planned)}</span>
+          <span className="ml-3 text-xs text-faint">Changes save as you go. Empty a budget to remove it from this month on.</span>
         </div>
       </Card>
-
-      {unbudgeted.length > 0 && (
-        <div className="mt-6">
-          <h2 className="text-sm font-medium text-ink-soft mb-2">Spending without a Budget</h2>
-          <Card className="divide-y divide-line">
-            {unbudgeted.map((line) => (
-              <div key={line.category} className="flex items-center gap-3 px-4 py-2.5">
-                <CategoryIcon name={line.category} size={24} />
-                <span className="flex-1 text-sm text-ink">{line.category}</span>
-                <span className="text-sm tabular-nums text-ink-soft">{formatMoney(line.spent_cents)}</span>
-                <button className={buttonGhost} onClick={() => setAdding(line.category)}>Set Budget</button>
-              </div>
-            ))}
-          </Card>
-        </div>
-      )}
     </div>
   );
 }
 
-function BudgetRow({ line, onSave }: { line: BudgetLine; onSave: (category: string, cents: number | null) => void }) {
-  const budget = line.budget_cents ?? 0;
-  const left = budget - line.spent_cents;
+function BudgetRow({ line, saved, onSave }: {
+  line: BudgetLine;
+  saved: boolean;
+  onSave: (category: string, cents: number | null) => void;
+}) {
+  const remaining = line.budget_cents == null ? null : line.budget_cents - line.spent_cents;
+  const share = line.budget_cents ? Math.max(0, line.spent_cents) / line.budget_cents : 0;
   return (
-    <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
-        <CategoryIcon name={line.category} size={28} />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-ink">{line.category}</p>
-          <p className={`text-xs tabular-nums ${left < 0 ? "text-red-600 dark:text-red-400" : "text-muted"}`}>
-            {formatMoney(line.spent_cents)} spent · {left < 0 ? `${formatMoney(-left)} over` : `${formatMoney(left)} left`}
-          </p>
-        </div>
-        <AmountInput key={line.budget_cents} initial={line.budget_cents} onCommit={(cents) => onSave(line.category, cents)} />
-      </div>
-      <Bar spent={line.spent_cents} budget={budget} color={categoryColor(line.category)} />
-    </div>
+    <tr className="border-b border-line-soft last:border-0">
+      <td className="py-3 px-4">
+        <span className="inline-flex items-center gap-2.5 font-medium text-ink">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: categoryColor(line.category) }} />
+          {line.category}
+        </span>
+      </td>
+      <td className="py-3 px-4">
+        <AmountInput key={line.budget_cents} initial={line.budget_cents} saved={saved} onCommit={(c) => onSave(line.category, c)} />
+      </td>
+      <td className="py-3 px-4 tabular-nums text-ink-soft">{formatMoney(line.spent_cents)}</td>
+      <td className="py-3 px-4 min-w-40">
+        {remaining == null ? (
+          <span className="text-faint">No budget</span>
+        ) : (
+          <>
+            <span className={`tabular-nums ${remaining < 0 ? "text-red-600 dark:text-red-400" : "text-ink-soft"}`}>
+              {remaining < 0 ? `${formatMoney(-remaining)} over` : formatMoney(remaining)}
+            </span>
+            <div className="mt-1.5 h-1.5 rounded-full bg-surface-muted overflow-hidden">
+              <div
+                className="h-full rounded-full"
+                style={{ width: `${Math.min(share, 1) * 100}%`, background: share > 1 ? "#dc2626" : categoryColor(line.category) }}
+              />
+            </div>
+          </>
+        )}
+      </td>
+    </tr>
   );
 }
 
-/** A dollar amount saved on Enter or when it loses focus; emptying it clears the Budget. */
-function AmountInput({ initial, onCommit, autoFocus }: {
+/** A dollar amount saved on Enter or when it loses focus. */
+function AmountInput({ initial, saved, onCommit }: {
   initial: number | null;
+  saved: boolean;
   onCommit: (cents: number | null) => void;
-  autoFocus?: boolean;
 }) {
   const [text, setText] = useState(dollars(initial));
   const parsed = parseDollars(text);
@@ -149,32 +180,19 @@ function AmountInput({ initial, onCommit, autoFocus }: {
     if (parsed !== undefined && parsed !== initial) onCommit(parsed);
   };
   return (
-    <div className="flex items-center gap-1">
-      <span className="text-sm text-muted">$</span>
+    <span className="inline-flex items-center gap-2">
       <input
         value={text}
         inputMode="decimal"
-        autoFocus={autoFocus}
-        aria-label="Monthly budget"
+        aria-label="Planned amount"
         aria-invalid={parsed === undefined}
         placeholder="0"
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-        className={`w-24 text-right tabular-nums ${field} ${parsed === undefined ? "border-red-500" : ""}`}
+        className={`w-28 tabular-nums ${field} ${parsed === undefined ? "border-red-500" : ""}`}
       />
-    </div>
-  );
-}
-
-function Bar({ spent, budget, color }: { spent: number; budget: number; color: string }) {
-  const share = budget > 0 ? Math.max(0, spent) / budget : 0;
-  return (
-    <div className="mt-2 h-2 rounded-full bg-surface-muted overflow-hidden" role="presentation">
-      <div
-        className="h-full rounded-full transition-all"
-        style={{ width: `${Math.min(share, 1) * 100}%`, background: share > 1 ? "#dc2626" : color }}
-      />
-    </div>
+      {saved && <span className="text-xs text-faint">Saved</span>}
+    </span>
   );
 }

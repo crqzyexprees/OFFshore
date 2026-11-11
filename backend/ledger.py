@@ -49,6 +49,27 @@ def delete_account(conn: sqlite3.Connection, account_id: int) -> None:
     conn.commit()
 
 
+# ── Statements ──────────────────────────────────────────────────────────────
+
+def statements(conn: sqlite3.Connection) -> list[dict]:
+    """Imported Statements, latest billing period first, with how many
+    Transactions each holds."""
+    rows = conn.execute(
+        """SELECT s.id, s.account_id, s.period_start, s.period_end, s.file_name, s.imported_at,
+                  COUNT(t.id) AS transactions
+           FROM statements s LEFT JOIN transactions t ON t.statement_id = s.id
+           GROUP BY s.id ORDER BY s.period_end DESC, s.id DESC"""
+    )
+    return [dict(r) for r in rows]
+
+
+def delete_statement(conn: sqlite3.Connection, statement_id: int) -> None:
+    """Removes the Statement and its Transactions, Overrides included."""
+    if conn.execute("DELETE FROM statements WHERE id = ?", (statement_id,)).rowcount == 0:
+        raise NotFound("Statement not found")
+    conn.commit()
+
+
 # ── Transactions ────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)

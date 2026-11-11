@@ -100,6 +100,16 @@ export interface BudgetLine {
   spent_cents: number;
 }
 
+export interface Statement {
+  id: number;
+  account_id: number;
+  period_start: string;
+  period_end: string;
+  file_name: string | null;
+  imported_at: string;
+  transactions: number;
+}
+
 export interface Spending {
   categories: { category: string; cents: number }[];
   withdrawn_cents: number;
@@ -154,6 +164,11 @@ export const db = {
     const qs = params.toString();
     return request<Transaction[]>(`/api/transactions${qs ? `?${qs}` : ""}`);
   },
+
+  getStatements: () => request<Statement[]>("/api/statements"),
+
+  /** Removes the Statement with its Transactions and any edits made to them. */
+  deleteStatement: (id: number) => request<{ ok: true }>(`/api/statements/${id}`, { method: "DELETE" }),
 
   getSpending: (month: string) => request<Spending>(`/api/spending/${month}`),
 

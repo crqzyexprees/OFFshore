@@ -3,14 +3,16 @@ import { FileText, Upload } from "lucide-react";
 import { db, Account, ApiError, ImportProblem, ImportResult } from "../lib/db";
 import { bankName, formatMoney, useReference } from "../lib/reference";
 
-interface ImportProps {
+interface UploaderProps {
   accounts: Account[];
+  onImported: () => void;
 }
 
 /** Why the last attempt failed: an ImportProblem, or any other error's message. */
 type Problem = ImportProblem | { problem?: undefined; message: string };
 
-export function Import({ accounts }: ImportProps) {
+/** Upload a Statement or Export, asking for its Account or period when the file doesn't say. */
+export function StatementUploader({ accounts, onImported }: UploaderProps) {
   const reference = useReference();
   const [file, setFile] = useState<File | null>(null);
   const [accountId, setAccountId] = useState<number | null>(null);
@@ -37,6 +39,7 @@ export function Import({ accounts }: ImportProps) {
           period: periodStart && periodEnd ? { start: periodStart, end: periodEnd } : undefined,
         })
       );
+      onImported();
     } catch (e) {
       if (e instanceof ApiError && e.problem) {
         setProblem(e.problem);
@@ -61,21 +64,20 @@ export function Import({ accounts }: ImportProps) {
   const accountName = (id: number) => accounts.find((a) => a.id === id)?.name ?? `#${id}`;
 
   return (
-    <div className="p-6 max-w-lg">
-      <h1 className="text-2xl font-semibold text-ink mb-2">Import Statement</h1>
-      <p className="text-sm text-muted mb-6">
-        Statements are read and classified on this device. Importing the same billing
-        period again replaces it and keeps your edits.
+    <div>
+      <p className="text-sm text-muted mb-4">
+        PDF, CSV, OFX or QFX. Statements are read and categorized on this device. Uploading the same
+        billing period again replaces it and keeps your edits.
       </p>
 
       {accounts.length === 0 ? (
         <p className="text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg p-3">
-          Add an account first before importing statements.
+          Add an account first (on the Accounts page), then upload its statements here.
         </p>
       ) : (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-ink-soft mb-1">Statement (PDF, CSV, OFX or QFX)</label>
+            <label className="block text-sm font-medium text-ink-soft mb-1">File</label>
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
@@ -90,15 +92,15 @@ export function Import({ accounts }: ImportProps) {
                 const dropped = e.dataTransfer.files[0];
                 if (dropped) pickFile(dropped);
               }}
-              className={`w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-sm transition-colors ${
+              className={`w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-10 text-sm transition-colors ${
                 dragging
-                  ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40"
-                  : "border-field hover:border-indigo-400 hover:bg-surface-muted"
+                  ? "border-ink bg-accent-soft"
+                  : "border-field hover:border-muted hover:bg-surface-muted"
               }`}
             >
               {file ? (
                 <>
-                  <FileText size={28} className="text-indigo-600 dark:text-indigo-400" />
+                  <FileText size={28} className="text-ink" />
                   <span className="font-medium text-ink break-all">{file.name}</span>
                   <span className="text-xs text-muted">{(file.size / 1024).toFixed(0)} KB · click to choose another</span>
                 </>
@@ -106,7 +108,7 @@ export function Import({ accounts }: ImportProps) {
                 <>
                   <Upload size={28} className="text-faint" />
                   <span className="text-ink-soft">
-                    Drop a statement here or <span className="text-indigo-600 dark:text-indigo-400 font-medium">browse</span>
+                    Drop a statement here or <span className="text-ink font-medium underline underline-offset-4">browse</span>
                   </span>
                 </>
               )}
@@ -127,7 +129,7 @@ export function Import({ accounts }: ImportProps) {
             <label className="block text-sm font-medium text-ink-soft mb-1">Account</label>
             <select
               className={`w-full border rounded-lg px-3 py-2 text-sm ${
-                needsAccount ? "border-amber-500 dark:border-amber-600 ring-2 ring-amber-200 dark:ring-amber-900" : "border-field"
+                needsAccount ? "border-amber-500 dark:border-amber-600 ring-2 ring-amber-200 dark:ring-amber-900" : "border-line"
               }`}
               value={accountId ?? ""}
               onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
@@ -150,14 +152,14 @@ export function Import({ accounts }: ImportProps) {
                   type="date"
                   value={periodStart}
                   onChange={(e) => setPeriodStart(e.target.value)}
-                  className="border border-field rounded-lg px-2 py-1"
+                  className="border border-line rounded-lg px-2 py-1"
                 />
                 <span className="text-muted">to</span>
                 <input
                   type="date"
                   value={periodEnd}
                   onChange={(e) => setPeriodEnd(e.target.value)}
-                  className="border border-field rounded-lg px-2 py-1"
+                  className="border border-line rounded-lg px-2 py-1"
                 />
               </div>
             </div>
@@ -166,15 +168,15 @@ export function Import({ accounts }: ImportProps) {
           <button
             onClick={handleImport}
             disabled={!file || loading || (needsPeriod && !(periodStart && periodEnd))}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-lg disabled:opacity-50 text-sm font-medium"
+            className="w-full bg-accent hover:bg-accent-hover text-accent-ink py-2.5 rounded-lg text-sm font-medium"
           >
             {loading ? (
               <span className="inline-flex items-center gap-2">
-                <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                <span className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" />
                 Reading & classifying…
               </span>
             ) : (
-              "Import Statement"
+              "Upload statement"
             )}
           </button>
         </div>

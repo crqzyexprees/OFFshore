@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Backups } from "../components/Backups";
-import { shell } from "../lib/backend";
+import { inTauri, shell } from "../lib/backend";
+import { Card, CardTitle, PageHeader, buttonPrimary } from "../components/ui";
 
 export function Settings() {
   const [safeMode, setSafeMode] = useState<boolean | null>(null);
@@ -8,7 +9,7 @@ export function Settings() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    shell.getSafeMode().then(setSafeMode, (e) => setError(String(e)));
+    if (inTauri) shell.getSafeMode().then(setSafeMode, (e) => setError(String(e)));
   }, []);
 
   const toggle = async () => {
@@ -23,10 +24,15 @@ export function Settings() {
   };
 
   return (
-    <div className="p-6 max-w-lg space-y-6">
-      <h1 className="text-2xl font-semibold text-ink">Settings</h1>
+    <div className="max-w-3xl">
+      <PageHeader title="Settings" subtitle="Backups and how the app runs on this computer." />
 
-      <div className="bg-surface rounded-xl shadow-sm border border-line p-4 space-y-3">
+      <div className="space-y-6">
+      <Backups />
+
+      {inTauri && (
+      <Card className="p-6 space-y-3">
+        <CardTitle>Display</CardTitle>
         <label className="flex items-start gap-3 cursor-pointer">
           <input
             type="checkbox"
@@ -49,15 +55,15 @@ export function Settings() {
         {changed && (
           <button
             onClick={() => shell.restart()}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium"
+            className={buttonPrimary}
           >
             Restart to apply
           </button>
         )}
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+      </Card>
+      )}
       </div>
-
-      <Backups />
     </div>
   );
 }
