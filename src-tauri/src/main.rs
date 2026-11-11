@@ -82,19 +82,19 @@ fn main() {
                     if handle.state::<UiReady>().0.load(Ordering::SeqCst) {
                         return;
                     }
-                    eprintln!("[finance] UI did not load in {UI_READY_TIMEOUT:?}; restarting in safe mode");
+                    eprintln!("[splitlens] UI did not load in {UI_READY_TIMEOUT:?}; restarting in safe mode");
                     let mut settings = Settings::load();
                     settings.safe_mode = true;
                     match settings.save() {
                         Ok(()) => restart(&handle),
-                        Err(e) => eprintln!("[finance] could not save safe mode: {e}"),
+                        Err(e) => eprintln!("[splitlens] could not save safe mode: {e}"),
                     }
                 });
             }
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building the Finance app");
+        .expect("error while building the SplitLens app");
 
     app.run(|app, event| {
         if let RunEvent::Exit = event {

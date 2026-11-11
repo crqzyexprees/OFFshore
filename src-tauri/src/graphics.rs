@@ -30,7 +30,7 @@ pub fn apply_workarounds(safe_mode: bool) {
     }
 
     eprintln!(
-        "[finance] graphics: nvidia={nvidia} wayland={wayland} safe_mode={safe_mode} set={applied:?}"
+        "[splitlens] graphics: nvidia={nvidia} wayland={wayland} safe_mode={safe_mode} set={applied:?}"
     );
 }
 

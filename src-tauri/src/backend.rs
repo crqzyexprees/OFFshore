@@ -1,7 +1,7 @@
 //! Runs the Python backend (`python -m backend --sidecar`) as a child process.
 //!
 //! The backend binds a random localhost port, then prints
-//! `FINANCE_BACKEND_READY <port> <token>` on stdout. We hold its stdin open for
+//! `SPLITLENS_BACKEND_READY <port> <token>` on stdout. We hold its stdin open for
 //! as long as we live; when we exit or crash the pipe closes and it shuts down.
 
 use std::io::{BufRead, BufReader};
@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::AppHandle;
 
-const READY_PREFIX: &str = "FINANCE_BACKEND_READY";
+const READY_PREFIX: &str = "SPLITLENS_BACKEND_READY";
 const START_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Serialize)]
@@ -127,7 +127,7 @@ fn command(app: &AppHandle) -> Result<Command, String> {
         .resource_dir()
         .map_err(|e| e.to_string())?
         .join("sidecar");
-    let mut cmd = Command::new(dir.join("finance-backend"));
+    let mut cmd = Command::new(dir.join("splitlens-backend"));
     cmd.arg("--sidecar");
     Ok(cmd)
 }

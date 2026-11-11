@@ -1,4 +1,4 @@
-# PyInstaller spec: bundles the Python backend into build/sidecar/finance-backend/
+# PyInstaller spec: bundles the Python backend into build/sidecar/splitlens-backend/
 # (one-folder mode — starts instantly, unlike one-file which unpacks on every launch).
 import os
 
@@ -26,8 +26,8 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="finance-backend",
+    name="splitlens-backend",
     console=True,
     upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="finance-backend", upx=False)
+coll = COLLECT(exe, a.binaries, a.datas, name="splitlens-backend", upx=False)

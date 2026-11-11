@@ -1,4 +1,4 @@
-# Finance — Local Spending Tracker
+# SplitLens — Local Spending Tracker
 
 A fully local desktop app (**Tauri + React** UI, **Python** backend) that reads credit card and bank PDF Statements, predicts each transaction's Category on-device (learning from your corrections), stores everything in SQLite, and visualizes spending across your Accounts.
 
@@ -73,13 +73,13 @@ distros from ~2022 onward regardless of what you build on. Output in `release/`:
 
 | File | Use it on |
 |------|-----------|
-| `Finance_*.AppImage` | Any distro — `chmod +x` and run, or manage it with [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) |
-| `Finance-*.x86_64.rpm` | Fedora — uses the system's WebKit, the most reliable option on NVIDIA |
-| `Finance_*_amd64.deb` | Debian / Ubuntu |
+| `SplitLens_*.AppImage` | Any distro — `chmod +x` and run, or manage it with [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever) |
+| `SplitLens-*.x86_64.rpm` | Fedora — uses the system's WebKit, the most reliable option on NVIDIA |
+| `SplitLens_*_amd64.deb` | Debian / Ubuntu |
 
-The Python backend is bundled with PyInstaller (`packaging/finance-backend.spec`), so nothing
+The Python backend is bundled with PyInstaller (`packaging/splitlens-backend.spec`), so nothing
 needs to be installed on the target machine. The first build takes a while; dependency caches are
-kept in podman volumes (`finance-build-*`) so later builds are faster.
+kept in podman volumes (`splitlens-build-*`) so later builds are faster.
 
 ### Graphics problems (blank window, NVIDIA)
 
@@ -88,12 +88,12 @@ WebKitGTK has known rendering bugs with some drivers. The app handles them in la
 1. **NVIDIA detected** (`/proc/driver/nvidia/version`): sets `__NV_DISABLE_EXPLICIT_SYNC=1` on
    Wayland or `WEBKIT_DISABLE_DMABUF_RENDERER=1` on X11.
 2. **Safe mode**: if the window hasn't loaded within 12 seconds, the app saves `safe_mode` to
-   `~/.config/dev.offshore.finance/settings.json` and restarts with software rendering. Toggle it
+   `~/.config/app.splitlens/settings.json` and restarts with software rendering. Toggle it
    under **Settings**, or launch once with `--safe-mode`.
 3. **Native packages**: if the AppImage still misbehaves, use the `.rpm`/`.deb`.
 
 Variables you set yourself are never overridden. The app logs what it applied to stderr:
-`[finance] graphics: nvidia=… wayland=… safe_mode=… set=[…]`.
+`[splitlens] graphics: nvidia=… wayland=… safe_mode=… set=[…]`.
 
 ### How Categories are predicted
 
@@ -145,7 +145,7 @@ An import the backend can't complete on its own returns `422` with a `problem` c
 
 ## Privacy
 
-- All data stored in `~/.local/share/finance-app/finance.db`
+- All data stored in `~/.local/share/splitlens/splitlens.db` (data from before the rename, in `~/.local/share/finance-app/`, is moved there on first start)
 - No network requests at runtime (localhost only)
 - The API listens on `127.0.0.1` only, requires a random per-launch token, and only allows the app's own origin (CORS), so other programs and websites can't use it
 - Your statements never leave your machine

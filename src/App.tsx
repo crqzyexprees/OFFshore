@@ -88,7 +88,7 @@ function App() {
             <Wallet size={18} />
           </div>
           <div>
-            <h1 className="text-base font-semibold leading-tight">Finance</h1>
+            <h1 className="text-base font-semibold leading-tight">SplitLens</h1>
             <p className="text-xs text-slate-400">Local & private</p>
           </div>
         </div>

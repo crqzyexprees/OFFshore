@@ -1,6 +1,6 @@
 import sqlite3
 
-from backend.config import APP_DATA, DB_PATH
+from backend.config import APP_DATA, DB_PATH, move_finance_data
 from backend.vocabulary import ACCOUNT_KINDS, CATEGORIZED_KINDS, FALLBACK_CATEGORY, KINDS, sql_list
 
 SCHEMA_VERSION = 2
@@ -9,6 +9,7 @@ _KIND_CHECK = sql_list(KINDS)
 
 
 def get_connection() -> sqlite3.Connection:
+    move_finance_data()
     APP_DATA.mkdir(parents=True, exist_ok=True)
     return connect(DB_PATH)
 

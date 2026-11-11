@@ -2,7 +2,7 @@ import { useState } from "react";
 
 export type ThemePreference = "system" | "light" | "dark";
 
-const STORAGE_KEY = "finance.theme";
+const STORAGE_KEY = "splitlens.theme";
 const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
 
 // The choice is a per-device convenience, so localStorage is enough; it may be

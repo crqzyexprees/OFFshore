@@ -11,7 +11,7 @@ echo "==> Python backend (PyInstaller)"
 /opt/venv/bin/python -m backend.prediction.fetch  # pinned + checksummed; skipped if present
 rm -rf build/sidecar
 /opt/venv/bin/pyinstaller --noconfirm --log-level WARN \
-    --distpath build/sidecar --workpath /tmp/pyinstaller packaging/finance-backend.spec
+    --distpath build/sidecar --workpath /tmp/pyinstaller packaging/splitlens-backend.spec
 
 echo "==> Tauri app (AppImage, rpm, deb)"
 # linuxdeploy is itself an AppImage; there's no FUSE in the container.

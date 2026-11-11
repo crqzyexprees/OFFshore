@@ -1,7 +1,7 @@
 {
   "bundle": {
     "resources": {
-      "../build/sidecar/finance-backend/": "sidecar/"
+      "../build/sidecar/splitlens-backend/": "sidecar/"
     }
   }
 }

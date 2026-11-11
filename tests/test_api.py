@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    db_path = tmp_path / "finance.db"
+    db_path = tmp_path / "splitlens.db"
     monkeypatch.setattr(api, "get_connection", lambda: connect(db_path))
     monkeypatch.setattr(api, "MODEL_DIR", tmp_path / "no-model")
     # Uploads carry a stub PDF; each test says which Document it "contains".

@@ -11,7 +11,7 @@ import uvicorn
 from backend.config import HOST, PORT
 
 # First stdout line in sidecar mode; the Tauri shell parses it to find the API.
-READY_PREFIX = "FINANCE_BACKEND_READY"
+READY_PREFIX = "SPLITLENS_BACKEND_READY"
 
 
 def wait_for_server(server: uvicorn.Server, timeout: float = 30.0) -> None:
@@ -26,7 +26,7 @@ def wait_for_server(server: uvicorn.Server, timeout: float = 30.0) -> None:
 def run_sidecar() -> None:
     """Run under the Tauri shell: random port, per-launch token, exit with parent."""
     token = secrets.token_urlsafe(32)
-    os.environ["FINANCE_API_TOKEN"] = token
+    os.environ["SPLITLENS_API_TOKEN"] = token
 
     from backend.api import app
 
@@ -34,7 +34,7 @@ def run_sidecar() -> None:
     sock.bind((HOST, 0))
     port = sock.getsockname()[1]
 
-    log_level = os.environ.get("FINANCE_LOG_LEVEL", "warning")
+    log_level = os.environ.get("SPLITLENS_LOG_LEVEL", "warning")
     server = uvicorn.Server(uvicorn.Config(app, log_level=log_level))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()

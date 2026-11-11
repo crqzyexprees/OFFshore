@@ -1,5 +1,5 @@
 [package]
-name = "finance"
+name = "splitlens"
 version = "0.1.0"
 description = "Local credit card transaction classifier"
 edition = "2021"

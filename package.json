@@ -1,8 +1,8 @@
 {
-  "name": "finance-app",
+  "name": "splitlens",
   "private": false,
   "version": "0.1.0",
-  "description": "Local credit card transaction classifier — Python + React",
+  "description": "Local-only budgeting and spending tracker",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n api,vite \"npm run dev:backend\" \"npm run dev:vite\"",

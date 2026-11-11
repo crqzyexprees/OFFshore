@@ -28,3 +28,22 @@ def test_init_is_idempotent():
     init_db(conn)
     init_db(conn)
     assert "legacy_accounts" not in tables(conn)
+
+
+def test_finance_data_moves_to_splitlens_once(tmp_path):
+    from backend.config import move_finance_data
+
+    old, new = tmp_path / "finance-app", tmp_path / "splitlens"
+    old.mkdir()
+    (old / "finance.db").write_text("db")
+    (old / "finance.db-wal").write_text("wal")
+    move_finance_data(old, new)
+    assert not old.exists()
+    assert (new / "splitlens.db").read_text() == "db"
+    assert (new / "splitlens.db-wal").read_text() == "wal"
+
+    old.mkdir()
+    (old / "finance.db").write_text("newer")
+    move_finance_data(old, new)  # SplitLens already has data: leave both alone
+    assert (new / "splitlens.db").read_text() == "db"
+    assert (old / "finance.db").exists()

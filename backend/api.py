@@ -36,12 +36,12 @@ def _corrections() -> list[tuple[str, str]]:
         return [(c["description"], c["category"]) for c in ledger.corrections(conn)]
 
 
-app = FastAPI(title="Finance API", lifespan=lifespan)
+app = FastAPI(title="SplitLens API", lifespan=lifespan)
 
 # Set by `python -m backend --sidecar`: the Tauri shell launches the backend on a
 # random port and hands this per-launch token to the UI. In browser dev mode
 # (no token) the UI is same-origin through the Vite proxy, so CORS stays off.
-API_TOKEN = os.environ.get("FINANCE_API_TOKEN")
+API_TOKEN = os.environ.get("SPLITLENS_API_TOKEN")
 
 if API_TOKEN:
 
