@@ -3,19 +3,9 @@ import { BudgetLine, db } from "../lib/db";
 import { categoryColor } from "../lib/categories";
 import { formatMoney, useReference } from "../lib/reference";
 import { monthLabel, thisMonth } from "../lib/month";
+import { dollars, parseDollars } from "../lib/money";
 import { MonthPicker } from "../components/MonthPicker";
 import { Card, CardTitle, PageHeader, Stat, field } from "../components/ui";
-
-/** "$1,234.5" → 123450; blank or zero → null (no Budget); anything else → undefined (invalid). */
-function parseDollars(text: string): number | null | undefined {
-  const cleaned = text.replace(/[$,\s]/g, "");
-  if (cleaned === "") return null;
-  if (!/^\d+(\.\d{0,2})?$/.test(cleaned)) return undefined;
-  const cents = Math.round(Number(cleaned) * 100);
-  return cents === 0 ? null : cents;
-}
-
-const dollars = (cents: number | null) => (cents == null ? "" : (cents / 100).toFixed(2).replace(/\.00$/, ""));
 
 export function Budgets() {
   const reference = useReference();

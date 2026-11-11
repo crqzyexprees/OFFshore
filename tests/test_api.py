@@ -152,3 +152,32 @@ def test_statements_listed_then_deleted(client):
     assert client.delete(f"/api/statements/{statement['id']}").status_code == 200
     assert client.get("/api/statements").json() == [] and client.get("/api/transactions").json() == []
     assert client.delete(f"/api/statements/{statement['id']}").status_code == 404
+
+
+def test_sharing_round_trip(client):
+    add_card(client)
+    upload(client, chase("12/10 OLIVE GARDEN 90.00"))
+    alex = client.post("/api/people", json={"name": "Alex"}).json()["id"]
+    assert client.post("/api/people", json={"name": "alex"}).status_code == 400
+    expense = client.post("/api/shared", json={
+        "date": "2025-12-10", "description": "Olive Garden dinner", "category": "Dining",
+        "total_cents": 9000, "your_share_cents": 4500, "shares": [{"person_id": alex, "cents": 4500}],
+    }).json()["id"]
+    reconcile = client.get("/api/reconcile").json()
+    [suggestion] = reconcile["suggestions"]
+    assert [e["id"] for e in reconcile["unlinked"]] == [expense]
+    assert client.post(f"/api/shared/{expense}/link", json={"transaction_id": suggestion["transaction_id"]}).status_code == 200
+    # Counted in the Purchase's own Category (no model here, so Other): the Share, not the $90.
+    assert [c["cents"] for c in client.get("/api/spending/2025-12").json()["categories"]] == [4500]
+    assert client.get("/api/people").json()[0]["balance_cents"] == 4500
+    client.post(f"/api/people/{alex}/settle", json={"date": "2025-12-20"})
+    assert client.get("/api/people").json()[0]["balance_cents"] == 0
+
+
+def test_splitwise_preview_then_import(client):
+    csv = b"Date,Description,Category,Cost,Currency,Sam,Alex\n2026-11-02,Dinner,Dining out,90.00,USD,-45.00,45.00\n"
+    preview = client.post("/api/splitwise/preview", files={"file": ("s.csv", csv)}).json()
+    assert preview["members"] == ["Sam", "Alex"] and preview["rows"] == 1
+    result = client.post("/api/splitwise/import", files={"file": ("s.csv", csv)}, data={"your_name": "Sam"}).json()
+    assert result["imported"] == 1
+    assert client.post("/api/splitwise/import", files={"file": ("s.csv", csv)}, data={"your_name": "Bob"}).status_code == 400

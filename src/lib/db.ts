@@ -110,6 +110,89 @@ export interface Statement {
   transactions: number;
 }
 
+export interface Person {
+  id: number;
+  name: string;
+  note: string | null;
+  /** Positive: they owe you. Negative: you owe them. */
+  balance_cents: number;
+}
+
+export interface Group {
+  id: number;
+  name: string;
+  members: { id: number; name: string }[];
+}
+
+export interface SharedExpense {
+  id: number;
+  date: string;
+  description: string;
+  category: string;
+  total_cents: number;
+  your_share_cents: number;
+  /** null: you paid. */
+  paid_by: number | null;
+  paid_by_name: string | null;
+  group_id: number | null;
+  group_name: string | null;
+  standalone: boolean;
+  from_splitwise: boolean;
+  shares: { person_id: number; name: string; cents: number }[];
+  transaction: { id: number; date: string; description: string; amount_cents: number } | null;
+  /** Whether your Share counts as Spending yet. */
+  counted: boolean;
+}
+
+export interface NewSharedExpense {
+  date: string;
+  description: string;
+  category: string;
+  total_cents: number;
+  your_share_cents: number;
+  paid_by: number | null;
+  shares: { person_id: number; cents: number }[];
+  group_id?: number | null;
+  transaction_id?: number | null;
+  standalone?: boolean;
+}
+
+export interface Settlement {
+  id: number;
+  date: string;
+  person_id: number;
+  name: string;
+  cents: number;
+  direction: "to_them" | "from_them";
+  note: string | null;
+}
+
+export interface LinkSuggestion {
+  expense_id: number;
+  transaction_id: number;
+  score: number;
+  reason: string;
+  expense: { id: number; date: string; description: string; total_cents: number };
+  transaction: { id: number; date: string; description: string; amount_cents: number };
+}
+
+export interface SplitwisePreview {
+  members: string[];
+  rows: number;
+  payments: number;
+  first_date: string | null;
+  last_date: string | null;
+  rejected: Rejected;
+}
+
+export interface SplitwiseResult {
+  imported: number;
+  settlements: number;
+  already_imported: number;
+  not_involving_you: number;
+  skipped: Rejected;
+}
+
 export interface Spending {
   categories: { category: string; cents: number }[];
   withdrawn_cents: number;
@@ -171,6 +254,52 @@ export const db = {
   deleteStatement: (id: number) => request<{ ok: true }>(`/api/statements/${id}`, { method: "DELETE" }),
 
   getSpending: (month: string) => request<Spending>(`/api/spending/${month}`),
+
+  getPeople: () => request<Person[]>("/api/people"),
+  addPerson: (name: string, note?: string) =>
+    request<{ id: number }>("/api/people", { method: "POST", body: JSON.stringify({ name, note: note || null }) }),
+  deletePerson: (id: number) => request<{ ok: true }>(`/api/people/${id}`, { method: "DELETE" }),
+  /** Records the Settlement that brings this Person's Balance to zero. */
+  settleUp: (id: number, date: string) =>
+    request<{ settlement_id: number | null }>(`/api/people/${id}/settle`, { method: "POST", body: JSON.stringify({ date }) }),
+
+  getGroups: () => request<Group[]>("/api/groups"),
+  addGroup: (name: string, memberIds: number[] = []) =>
+    request<{ id: number }>("/api/groups", { method: "POST", body: JSON.stringify({ name, member_ids: memberIds }) }),
+  addMember: (groupId: number, personId: number) =>
+    request<{ ok: true }>(`/api/groups/${groupId}/members`, { method: "POST", body: JSON.stringify({ person_id: personId }) }),
+  removeMember: (groupId: number, personId: number) =>
+    request<{ ok: true }>(`/api/groups/${groupId}/members/${personId}`, { method: "DELETE" }),
+  deleteGroup: (id: number) => request<{ ok: true }>(`/api/groups/${id}`, { method: "DELETE" }),
+
+  getShared: (month?: string) => request<SharedExpense[]>(`/api/shared${month ? `?month=${month}` : ""}`),
+  addShared: (expense: NewSharedExpense) =>
+    request<{ id: number }>("/api/shared", { method: "POST", body: JSON.stringify(expense) }),
+  deleteShared: (id: number) => request<{ ok: true }>(`/api/shared/${id}`, { method: "DELETE" }),
+  /** Links the expense to the Purchase that paid for it; null unlinks. */
+  linkShared: (id: number, transactionId: number | null) =>
+    request<{ ok: true }>(`/api/shared/${id}/link`, { method: "POST", body: JSON.stringify({ transaction_id: transactionId }) }),
+  /** Marks an expense you paid as paid outside your tracked accounts, so your Share counts. */
+  setStandalone: (id: number, standalone: boolean) =>
+    request<{ ok: true }>(`/api/shared/${id}/standalone`, { method: "POST", body: JSON.stringify({ standalone }) }),
+
+  getSettlements: () => request<Settlement[]>("/api/settlements"),
+  deleteSettlement: (id: number) => request<{ ok: true }>(`/api/settlements/${id}`, { method: "DELETE" }),
+
+  getReconcile: () => request<{ suggestions: LinkSuggestion[]; unlinked: SharedExpense[] }>("/api/reconcile"),
+
+  previewSplitwise: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<SplitwisePreview>("/api/splitwise/preview", { method: "POST", body: form });
+  },
+  importSplitwise: (file: File, yourName: string, groupName: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("your_name", yourName);
+    if (groupName.trim()) form.append("group_name", groupName.trim());
+    return request<SplitwiseResult>("/api/splitwise/import", { method: "POST", body: form });
+  },
 
   getBudgets: (month: string) =>
     request<{ categories: BudgetLine[] }>(`/api/budgets/${month}`).then((r) => r.categories),

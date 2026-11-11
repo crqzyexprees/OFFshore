@@ -12,7 +12,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from backend import backup, ledger, prediction
+from backend import backup, ledger, prediction, sharing, splitwise
 from backend.config import BACKUP_DIR, MODEL_DIR, SAFETY_DIR
 from backend.db import get_connection, init_db
 from backend.statement_import import BANKS, ImportProblem, import_statement, is_export, read_export, read_pdf
@@ -77,6 +77,61 @@ class BackupIn(BaseModel):
     """No password: a plain copy. A password: an encrypted Backup."""
 
     password: Optional[str] = None
+
+
+class PersonIn(BaseModel):
+    name: str = Field(min_length=1)
+    note: Optional[str] = None
+
+
+class GroupIn(BaseModel):
+    name: str = Field(min_length=1)
+    member_ids: list[int] = []
+
+
+class MemberIn(BaseModel):
+    person_id: int
+
+
+class ShareIn(BaseModel):
+    person_id: int
+    cents: int
+
+
+class ExpenseIn(BaseModel):
+    """A Shared Expense. `paid_by` null: the user paid, and `shares` lists what
+    each other Person owes."""
+
+    date: str
+    description: str
+    category: str
+    total_cents: int
+    your_share_cents: int
+    paid_by: Optional[int] = None
+    shares: list[ShareIn] = []
+    group_id: Optional[int] = None
+    transaction_id: Optional[int] = None
+    standalone: bool = False
+
+
+class LinkIn(BaseModel):
+    transaction_id: Optional[int] = None  # null unlinks
+
+
+class StandaloneIn(BaseModel):
+    standalone: bool
+
+
+class SettlementIn(BaseModel):
+    date: str
+    person_id: int
+    cents: int
+    direction: str
+    note: Optional[str] = None
+
+
+class SettleUpIn(BaseModel):
+    date: str
 
 
 class BudgetIn(BaseModel):
@@ -273,3 +328,155 @@ def restore_backup(file: UploadFile = File(...), password: Optional[str] = Form(
         except backup.BackupError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
     return {"ok": True, "previous": str(safety)}
+
+
+# ── Sharing (docs/adr/0007) ──
+
+def _sharing(action):
+    """Runs `action(conn)`, mapping refusals to HTTP errors."""
+    with closing(get_connection()) as conn:
+        try:
+            return action(conn)
+        except ledger.LedgerError as e:
+            raise _refused(e) from e
+
+
+@app.get("/api/people")
+def get_people():
+    return _sharing(sharing.people)
+
+
+@app.post("/api/people")
+def add_person(body: PersonIn):
+    return {"id": _sharing(lambda c: sharing.add_person(c, body.name, body.note))}
+
+
+@app.delete("/api/people/{person_id}")
+def delete_person(person_id: int):
+    _sharing(lambda c: sharing.delete_person(c, person_id))
+    return {"ok": True}
+
+
+@app.post("/api/people/{person_id}/settle")
+def settle_up(person_id: int, body: SettleUpIn):
+    return {"settlement_id": _sharing(lambda c: sharing.settle_up(c, person_id, body.date))}
+
+
+@app.get("/api/groups")
+def get_groups():
+    return _sharing(sharing.groups)
+
+
+@app.post("/api/groups")
+def add_group(body: GroupIn):
+    return {"id": _sharing(lambda c: sharing.add_group(c, body.name, body.member_ids))}
+
+
+@app.post("/api/groups/{group_id}/members")
+def add_member(group_id: int, body: MemberIn):
+    _sharing(lambda c: sharing.add_member(c, group_id, body.person_id))
+    return {"ok": True}
+
+
+@app.delete("/api/groups/{group_id}/members/{person_id}")
+def remove_member(group_id: int, person_id: int):
+    _sharing(lambda c: sharing.remove_member(c, group_id, person_id))
+    return {"ok": True}
+
+
+@app.delete("/api/groups/{group_id}")
+def delete_group(group_id: int):
+    _sharing(lambda c: sharing.delete_group(c, group_id))
+    return {"ok": True}
+
+
+@app.get("/api/shared")
+def get_shared(month: Optional[str] = None):
+    return _sharing(lambda c: sharing.expenses(c, month))
+
+
+@app.post("/api/shared")
+def add_shared(body: ExpenseIn):
+    expense = sharing.NewExpense(
+        **body.model_dump(exclude={"shares"}),
+        shares={s.person_id: s.cents for s in body.shares},
+    )
+    return {"id": _sharing(lambda c: sharing.add_expense(c, expense))}
+
+
+@app.delete("/api/shared/{expense_id}")
+def delete_shared(expense_id: int):
+    _sharing(lambda c: sharing.delete_expense(c, expense_id))
+    return {"ok": True}
+
+
+@app.post("/api/shared/{expense_id}/link")
+def link_shared(expense_id: int, body: LinkIn):
+    if body.transaction_id is None:
+        _sharing(lambda c: sharing.unlink(c, expense_id))
+    else:
+        _sharing(lambda c: sharing.link(c, expense_id, body.transaction_id))
+    return {"ok": True}
+
+
+@app.post("/api/shared/{expense_id}/standalone")
+def standalone_shared(expense_id: int, body: StandaloneIn):
+    _sharing(lambda c: sharing.set_standalone(c, expense_id, body.standalone))
+    return {"ok": True}
+
+
+@app.get("/api/settlements")
+def get_settlements():
+    return _sharing(sharing.settlements)
+
+
+@app.post("/api/settlements")
+def add_settlement(body: SettlementIn):
+    return {"id": _sharing(lambda c: sharing.add_settlement(c, **body.model_dump()))}
+
+
+@app.delete("/api/settlements/{settlement_id}")
+def delete_settlement(settlement_id: int):
+    _sharing(lambda c: sharing.delete_settlement(c, settlement_id))
+    return {"ok": True}
+
+
+@app.get("/api/reconcile")
+def get_reconcile():
+    """Suggested Links, and every expense the user paid that isn't counted yet."""
+    def collect(conn):
+        waiting = [e for e in sharing.expenses(conn) if not e["counted"]]
+        return {"suggestions": sharing.suggestions(conn), "unlinked": waiting}
+    return _sharing(collect)
+
+
+@app.post("/api/splitwise/preview")
+def preview_splitwise(file: UploadFile = File(...)):
+    """The members and row count, so the user can say which member they are."""
+    try:
+        parsed = splitwise.read_splitwise(file.file.read())
+    except splitwise.SplitwiseError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {
+        "members": parsed.members,
+        "rows": len(parsed.rows),
+        "payments": sum(r.is_payment for r in parsed.rows),
+        "first_date": min((r.date for r in parsed.rows), default=None),
+        "last_date": max((r.date for r in parsed.rows), default=None),
+        "rejected": parsed.rejected,
+    }
+
+
+@app.post("/api/splitwise/import")
+def import_splitwise(
+    file: UploadFile = File(...),
+    your_name: str = Form(...),
+    group_name: Optional[str] = Form(None),
+):
+    try:
+        parsed = splitwise.read_splitwise(file.file.read())
+    except splitwise.SplitwiseError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    result = _sharing(lambda c: splitwise.import_splitwise(
+        c, parsed, your_name=your_name, group_name=group_name, predictor=predictor))
+    return result.to_json()

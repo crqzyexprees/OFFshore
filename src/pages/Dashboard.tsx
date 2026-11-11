@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { PieChart as PieIcon } from "lucide-react";
-import { BudgetLine, db, Spending } from "../lib/db";
+import { BudgetLine, db, Person, Spending } from "../lib/db";
 import { formatMoney } from "../lib/reference";
 import { monthLabel, shiftMonth, thisMonth } from "../lib/month";
 import { MonthPicker } from "../components/MonthPicker";
@@ -19,10 +19,15 @@ function change(current: number, previous: number): number | null {
   return previous > 0 ? ((current - previous) / previous) * 100 : null;
 }
 
-export function Dashboard({ onImport }: { onImport: () => void }) {
+export function Dashboard({ onImport, onShared }: { onImport: () => void; onShared: () => void }) {
   const [month, setMonth] = useState(thisMonth);
   const [history, setHistory] = useState<{ month: string; spending: Spending }[] | null>(null);
   const [budgets, setBudgets] = useState<BudgetLine[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
+
+  useEffect(() => {
+    db.getPeople().then(setPeople, () => setPeople([]));
+  }, []);
 
   useEffect(() => {
     const months = Array.from({ length: HISTORY }, (_, i) => shiftMonth(month, i - HISTORY + 1));
@@ -38,6 +43,10 @@ export function Dashboard({ onImport }: { onImport: () => void }) {
   const budgeted = budgets.filter((b) => b.budget_cents != null);
   const budgetTotal = budgeted.reduce((sum, b) => sum + (b.budget_cents ?? 0), 0);
   const budgetLeft = budgetTotal - budgeted.reduce((sum, b) => sum + b.spent_cents, 0);
+
+  const owedToYou = people.reduce((sum, p) => sum + Math.max(0, p.balance_cents), 0);
+  const youOwe = people.reduce((sum, p) => sum + Math.max(0, -p.balance_cents), 0);
+  const count = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
 
   return (
     <div>
@@ -65,6 +74,23 @@ export function Dashboard({ onImport }: { onImport: () => void }) {
           caption="ATM withdrawals, not counted as spending"
         />
       </div>
+
+      {people.length > 0 && (
+        <button onClick={onShared} className="mb-6 grid w-full grid-cols-1 gap-4 text-left md:grid-cols-2">
+          <Stat
+            label="Owed to you"
+            value={formatMoney(owedToYou)}
+            tone={owedToYou > 0 ? "good" : undefined}
+            caption={owedToYou > 0 ? `From ${count(people.filter((p) => p.balance_cents > 0).length)}` : "Nobody owes you anything"}
+          />
+          <Stat
+            label="You owe"
+            value={formatMoney(youOwe)}
+            tone={youOwe > 0 ? "bad" : undefined}
+            caption={youOwe > 0 ? `To ${count(people.filter((p) => p.balance_cents < 0).length)}` : "You're all settled up"}
+          />
+        </button>
+      )}
 
       <Card className="p-6 mb-6">
         <CardTitle>Month over month</CardTitle>

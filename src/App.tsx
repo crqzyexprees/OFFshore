@@ -7,16 +7,26 @@ import { Accounts } from "./pages/Accounts";
 import { Statements } from "./pages/Statements";
 import { Settings } from "./pages/Settings";
 import { Budgets } from "./pages/Budgets";
+import { Shared } from "./pages/Shared";
+import { Reconcile } from "./pages/Reconcile";
+import { People } from "./pages/People";
+import { Groups } from "./pages/Groups";
 import { ThemePreference, useThemePreference } from "./lib/theme";
 import { LucideIcon, Monitor, Moon, Sun } from "lucide-react";
 
-type Page = "dashboard" | "personal" | "budgeting" | "statements" | "accounts" | "settings";
+type Page =
+  | "dashboard" | "personal" | "budgeting" | "shared" | "reconcile"
+  | "statements" | "people" | "groups" | "accounts" | "settings";
 
 const NAV: { id: Page; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "personal", label: "Personal" },
   { id: "budgeting", label: "Budgeting" },
+  { id: "shared", label: "Shared" },
+  { id: "reconcile", label: "Reconcile" },
   { id: "statements", label: "Statements" },
+  { id: "people", label: "People" },
+  { id: "groups", label: "Groups" },
   { id: "accounts", label: "Accounts" },
   { id: "settings", label: "Settings" },
 ];
@@ -33,6 +43,8 @@ function App() {
     window.location.hash = next;
     setPageState(next);
   };
+  // Set when another page asks Shared to open on the Splitwise import.
+  const [splitwiseImport, setSplitwiseImport] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [backend, setBackend] = useState<"connecting" | "ready" | Error>(
     "connecting"
@@ -107,9 +119,28 @@ function App() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6">
-        {page === "dashboard" && <Dashboard onImport={() => setPage("statements")} />}
+        {page === "dashboard" && <Dashboard onImport={() => setPage("statements")} onShared={() => setPage("shared")} />}
         {page === "personal" && <Transactions accounts={accounts} onImport={() => setPage("statements")} />}
         {page === "budgeting" && <Budgets />}
+        {page === "shared" && (
+          <Shared
+            key={String(splitwiseImport)}
+            startImport={splitwiseImport}
+            onImportClosed={() => setSplitwiseImport(false)}
+            onReconcile={() => setPage("reconcile")}
+            onPeople={() => setPage("people")}
+          />
+        )}
+        {page === "reconcile" && (
+          <Reconcile
+            onImportSplitwise={() => {
+              setSplitwiseImport(true);
+              setPage("shared");
+            }}
+          />
+        )}
+        {page === "people" && <People />}
+        {page === "groups" && <Groups onPeople={() => setPage("people")} />}
         {page === "statements" && <Statements accounts={accounts} />}
         {page === "accounts" && <Accounts accounts={accounts} onChange={loadAccounts} />}
         {page === "settings" && <Settings />}
