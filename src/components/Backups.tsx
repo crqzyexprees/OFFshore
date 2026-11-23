@@ -18,6 +18,8 @@ export function Backups() {
   const [confirming, setConfirming] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [restored, setRestored] = useState<Status>(null);
+  const [copying, setCopying] = useState(false);
+  const [copied, setCopied] = useState<Status>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -46,6 +48,19 @@ export function Backups() {
       setSaved({ kind: "error", text: e instanceof Error ? e.message : String(e) });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveSpreadsheets = async () => {
+    setCopying(true);
+    setCopied(null);
+    try {
+      const { path } = await db.saveSpreadsheets();
+      setCopied({ kind: "ok", text: `Saved to ${path}` });
+    } catch (e) {
+      setCopied({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setCopying(false);
     }
   };
 
@@ -138,6 +153,18 @@ export function Backups() {
           </div>
         )}
         {restored && <StatusLine status={restored} />}
+      </div>
+
+      <div className="space-y-3 border-t border-line pt-4">
+        <h3 className="text-sm font-medium text-ink">Spreadsheet copy</h3>
+        <p className="text-xs text-muted">
+          A zip of CSV files you can open in a spreadsheet app: transactions, spending, shared expenses,
+          payments, balances and budgets. It can't be restored, and it isn't encrypted.
+        </p>
+        <button onClick={saveSpreadsheets} disabled={copying} className={buttonGhost}>
+          {copying ? "Saving…" : "Save as spreadsheets"}
+        </button>
+        {copied && <StatusLine status={copied} />}
       </div>
     </Card>
   );

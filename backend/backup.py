@@ -60,7 +60,7 @@ def save_backup(conn: sqlite3.Connection, directory: Path, password: str | None 
     while path.exists():  # two Backups in the same second
         n += 1
         path = directory / f"splitlens-{stamp}-{n}{suffix}"
-    _write_private(path, data)
+    write_private(path, data)
     return Saved(path, encrypted, len(data))
 
 
@@ -140,7 +140,7 @@ def _snapshot(conn: sqlite3.Connection) -> bytes:
         return path.read_bytes()
 
 
-def _write_private(path: Path, data: bytes) -> None:
+def write_private(path: Path, data: bytes) -> None:
     """Only the owner can read it; a half-written file is never left behind."""
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_name(path.name + ".partial")

@@ -215,6 +215,21 @@ export function StatementUploader({ accounts, onImported }: UploaderProps) {
               </ul>
             </div>
           )}
+          {result.unmatched_links.length > 0 && (
+            <div className="text-amber-800 dark:text-amber-300">
+              <p className="font-medium">
+                {result.unmatched_links.length} shared expense{result.unmatched_links.length === 1 ? "" : "s"} lost{" "}
+                {result.unmatched_links.length === 1 ? "its" : "their"} card charge and wait on Reconcile again:
+              </p>
+              <ul className="list-disc pl-5">
+                {result.unmatched_links.map((l) => (
+                  <li key={l.expense_id}>
+                    {l.expense_description} (was {l.date} {l.description} {formatMoney(l.amount_cents)})
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {result.rejected.length > 0 && <RejectedRows rows={result.rejected} />}
         </div>
       )}

@@ -1,26 +1,32 @@
 import { useEffect, useState } from "react";
-import { Trash2, Users } from "lucide-react";
-import { db, Group, NewSharedExpense, Person, Settlement, SharedExpense } from "../lib/db";
+import { Pencil, Trash2, Users } from "lucide-react";
+import { db, Group, NewSharedExpense, Person, Settlement, SharedExpense, Transaction } from "../lib/db";
 import { categoryColor } from "../lib/categories";
 import { formatMoney, useReference } from "../lib/reference";
-import { parseDollars, splitEvenly, today } from "../lib/money";
+import { dollars, parseDollars, splitEvenly, today } from "../lib/money";
 import { SplitwiseImport } from "../components/SplitwiseImport";
 import { Card, CardTitle, EmptyState, PageHeader, buttonGhost, buttonPrimary, field } from "../components/ui";
 
 const label = "mb-2 block text-sm font-medium text-ink-soft";
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function Shared({ onReconcile, onPeople, startImport = false, onImportClosed }: {
+export function Shared({ onReconcile, onPeople, startImport = false, onImportClosed, fromCharge = null, onChargeUsed }: {
   onReconcile: () => void;
   onPeople: () => void;
   startImport?: boolean;
   onImportClosed?: () => void;
+  /** A card charge to split ("Split" on Personal): the form starts from it, linked to it. */
+  fromCharge?: Transaction | null;
+  onChargeUsed?: () => void;
 }) {
   const [people, setPeople] = useState<Person[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [expenses, setExpenses] = useState<SharedExpense[] | null>(null);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [importing, setImporting] = useState(startImport);
+  const [editing, setEditing] = useState<SharedExpense | null>(null);
+  const [charge, setCharge] = useState<Transaction | null>(fromCharge);
+  const [paymentFor, setPaymentFor] = useState<{ personId: number; direction: Settlement["direction"] } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = () =>
@@ -38,13 +44,16 @@ export function Shared({ onReconcile, onPeople, startImport = false, onImportClo
     load();
   }, []);
 
+  /** Runs a change, reloads, and says whether it worked. */
   const act = async (action: () => Promise<unknown>) => {
     setError(null);
     try {
       await action();
       await load();
+      return true;
     } catch (e) {
       setError(errorText(e));
+      return false;
     }
   };
 
@@ -62,9 +71,29 @@ export function Shared({ onReconcile, onPeople, startImport = false, onImportClo
 
       {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <ExpenseForm people={people} groups={groups} onPeople={onPeople} onSaved={load} />
+      <ExpenseForm
+        key={editing ? `edit-${editing.id}` : charge ? `charge-${charge.id}` : "new"}
+        people={people}
+        groups={groups}
+        onPeople={onPeople}
+        editing={editing}
+        fromCharge={charge}
+        onDone={() => {
+          setEditing(null);
+          setCharge(null);
+          onChargeUsed?.();
+          load();
+        }}
+      />
 
-      <Balances people={people} onSettle={(id) => act(() => db.settleUp(id, today()))} />
+      <Balances
+        people={people}
+        onSettle={(id) => act(() => db.settleUp(id, today()))}
+        onPartPayment={(personId, direction) => {
+          setPaymentFor({ personId, direction });
+          document.getElementById("record-payment")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }}
+      />
 
       <Card className="p-6 mb-6">
         <CardTitle>All shared expenses</CardTitle>
@@ -76,15 +105,32 @@ export function Shared({ onReconcile, onPeople, startImport = false, onImportClo
         ) : (
           <ul className="space-y-2">
             {expenses.map((e) => (
-              <ExpenseRow key={e.id} expense={e} onReconcile={onReconcile} onDelete={() => act(() => db.deleteShared(e.id))} />
+              <ExpenseRow key={e.id} expense={e} onReconcile={onReconcile}
+                onEdit={() => {
+                  setCharge(null);
+                  setEditing(e);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                onDelete={() => act(() => db.deleteShared(e.id))} />
             ))}
           </ul>
         )}
       </Card>
 
-      {settlements.length > 0 && (
+      {people.length > 0 && (
         <Card className="p-6">
           <CardTitle>Settlements</CardTitle>
+          <PaymentForm
+            key={paymentFor ? `${paymentFor.personId}-${paymentFor.direction}` : "none"}
+            people={people}
+            initial={paymentFor}
+            onSave={async (payment) => {
+              const saved = await act(() => db.addSettlement(payment));
+              if (saved) setPaymentFor(null);
+              return saved;
+            }}
+          />
+          {settlements.length === 0 && <p className="text-sm text-muted">No payments recorded yet.</p>}
           <ul className="space-y-2">
             {settlements.map((s) => (
               <li key={s.id} className="flex items-center gap-3 rounded-xl border border-line px-4 py-3 text-sm">
@@ -107,7 +153,12 @@ export function Shared({ onReconcile, onPeople, startImport = false, onImportClo
   );
 }
 
-function ExpenseRow({ expense: e, onReconcile, onDelete }: { expense: SharedExpense; onReconcile: () => void; onDelete: () => void }) {
+function ExpenseRow({ expense: e, onReconcile, onEdit, onDelete }: {
+  expense: SharedExpense;
+  onReconcile: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   const [confirming, setConfirming] = useState(false);
   const status = e.paid_by !== null
     ? null
@@ -142,10 +193,16 @@ function ExpenseRow({ expense: e, onReconcile, onDelete }: { expense: SharedExpe
             <button onClick={() => setConfirming(false)} className="rounded-md px-2.5 py-1 text-ink-soft hover:bg-surface-muted">Cancel</button>
           </span>
         ) : (
-          <button onClick={() => setConfirming(true)} aria-label={`Delete ${e.description}`}
-            className="rounded-md p-1.5 text-faint hover:bg-surface-muted hover:text-red-600 dark:hover:text-red-400">
-            <Trash2 size={16} />
-          </button>
+          <span className="flex items-center">
+            <button onClick={onEdit} aria-label={`Edit ${e.description}`} title="Edit"
+              className="rounded-md p-1.5 text-faint hover:bg-surface-muted hover:text-ink">
+              <Pencil size={15} />
+            </button>
+            <button onClick={() => setConfirming(true)} aria-label={`Delete ${e.description}`} title="Delete"
+              className="rounded-md p-1.5 text-faint hover:bg-surface-muted hover:text-red-600 dark:hover:text-red-400">
+              <Trash2 size={16} />
+            </button>
+          </span>
         )}
       </div>
       {status && <div className="mt-2 pl-27">{status}</div>}
@@ -153,7 +210,11 @@ function ExpenseRow({ expense: e, onReconcile, onDelete }: { expense: SharedExpe
   );
 }
 
-function Balances({ people, onSettle }: { people: Person[]; onSettle: (id: number) => void }) {
+function Balances({ people, onSettle, onPartPayment }: {
+  people: Person[];
+  onSettle: (id: number) => void;
+  onPartPayment: (personId: number, direction: Settlement["direction"]) => void;
+}) {
   const [order, setOrder] = useState<"amount" | "name">("amount");
   const open = people
     .filter((p) => p.balance_cents !== 0)
@@ -187,7 +248,13 @@ function Balances({ people, onSettle }: { people: Person[]; onSettle: (id: numbe
                 <p className={`mt-1 text-2xl font-bold tabular-nums ${p.balance_cents > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                   {p.balance_cents > 0 ? `Owes you ${formatMoney(p.balance_cents)}` : `You owe ${formatMoney(-p.balance_cents)}`}
                 </p>
-                <button className={`mt-3 ${buttonPrimary}`} onClick={() => onSettle(p.id)}>Mark settled</button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className={buttonPrimary} onClick={() => onSettle(p.id)}>Mark settled</button>
+                  <button className={buttonGhost}
+                    onClick={() => onPartPayment(p.id, p.balance_cents > 0 ? "from_them" : "to_them")}>
+                    Record part payment
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -200,26 +267,69 @@ function Balances({ people, onSettle }: { people: Person[]; onSettle: (id: numbe
 type Payer = "me" | "them";
 type SplitMode = "equal" | "custom";
 
-function ExpenseForm({ people, groups, onPeople, onSaved }: {
+type Draft = {
+  description: string;
+  amount: string;
+  date: string;
+  category: string;
+  groupId: number | null;
+  payer: Payer;
+  paidBy: number | null;
+  withIds: number[];
+  mode: SplitMode;
+  custom: Record<number, string>;
+  yourShareText: string;
+};
+
+const BLANK: Draft = {
+  description: "", amount: "", date: "", category: "Other", groupId: null, payer: "me", paidBy: null,
+  withIds: [], mode: "equal", custom: {}, yourShareText: "",
+};
+
+/** The form's starting point: blank, an expense being edited, or a card charge to split. */
+function startFrom(editing: SharedExpense | null, charge: Transaction | null): Draft {
+  if (editing) {
+    const e = editing;
+    const equal = splitEvenly(e.total_cents, e.shares.length + 1);
+    const isEqual = e.paid_by === null && e.your_share_cents === equal[0] && e.shares.every((x, i) => x.cents === equal[i + 1]);
+    return {
+      description: e.description, amount: dollars(e.total_cents), date: e.date, category: e.category,
+      groupId: e.group_id, payer: e.paid_by === null ? "me" : "them", paidBy: e.paid_by,
+      withIds: e.shares.map((x) => x.person_id),
+      mode: isEqual ? "equal" : "custom",
+      custom: Object.fromEntries(e.shares.map((x) => [x.person_id, dollars(x.cents)])),
+      yourShareText: dollars(e.your_share_cents),
+    };
+  }
+  if (charge) {
+    return { ...BLANK, description: charge.description, amount: dollars(charge.amount_cents), date: charge.date,
+             category: charge.category ?? "Other" };
+  }
+  return { ...BLANK, date: today() };
+}
+
+function ExpenseForm({ people, groups, onPeople, editing, fromCharge, onDone }: {
   people: Person[];
   groups: Group[];
   onPeople: () => void;
-  onSaved: () => void;
+  /** Editing this expense instead of adding one. */
+  editing: SharedExpense | null;
+  /** Adding an expense made from this card charge, linked to it. */
+  fromCharge: Transaction | null;
+  /** Saved or cancelled. */
+  onDone: () => void;
 }) {
   const reference = useReference();
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [date, setDate] = useState(today);
-  const [category, setCategory] = useState("Other");
-  const [groupId, setGroupId] = useState<number | null>(null);
-  const [payer, setPayer] = useState<Payer>("me");
-  const [paidBy, setPaidBy] = useState<number | null>(null);
-  const [withIds, setWithIds] = useState<number[]>([]);
-  const [mode, setMode] = useState<SplitMode>("equal");
-  const [custom, setCustom] = useState<Record<number, string>>({});
-  const [yourShareText, setYourShareText] = useState("");
+  const [draft, setDraft] = useState<Draft>(() => startFrom(editing, fromCharge));
+  const set = (part: Partial<Draft>) => setDraft((d) => ({ ...d, ...part }));
+  const { description, amount, date, category, groupId, payer, paidBy, withIds, mode, custom, yourShareText } = draft;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The card charge this expense is (or will be) linked to: only possible when you paid.
+  const charge = fromCharge
+    ? { description: fromCharge.description, amount_cents: fromCharge.amount_cents, id: fromCharge.id }
+    : editing?.transaction ?? null;
 
   const total = parseDollars(amount) ?? 0;
   // Everyone else in the split (the payer too, when someone else paid).
@@ -233,7 +343,7 @@ function ExpenseForm({ people, groups, onPeople, onSaved }: {
     shares = payer === "me" ? withIds.map((id, i) => ({ person_id: id, cents: equal[i + 1] })) : [];
   } else if (payer === "me") {
     shares = withIds.map((id) => ({ person_id: id, cents: parseDollars(custom[id] ?? "") ?? 0 }));
-    yourShare = total - shares.reduce((s, x) => s + x.cents, 0);
+    yourShare = total - shares.reduce((sum, x) => sum + x.cents, 0);
   } else {
     yourShare = parseDollars(yourShareText) ?? 0;
   }
@@ -247,28 +357,29 @@ function ExpenseForm({ people, groups, onPeople, onSaved }: {
     yourShare > total ? "Your share can't be more than the total." : null;
 
   const pickGroup = (id: number | null) => {
-    setGroupId(id);
     const group = groups.find((g) => g.id === id);
-    if (group) setWithIds(group.members.map((m) => m.id).filter((m) => m !== paidBy));
+    set({ groupId: id, ...(group && { withIds: group.members.map((m) => m.id).filter((m) => m !== paidBy) }) });
   };
 
-  const toggle = (id: number) => setWithIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+  const toggle = (id: number) => set({ withIds: withIds.includes(id) ? withIds.filter((x) => x !== id) : [...withIds, id] });
 
   const save = async () => {
     if (problem || yourShare === undefined) return;
     setSaving(true);
     setError(null);
+    const youPaid = payer === "me";
     const expense: NewSharedExpense = {
       date, description: description.trim(), category, total_cents: total, your_share_cents: yourShare,
-      paid_by: payer === "me" ? null : paidBy, shares, group_id: groupId,
+      paid_by: youPaid ? null : paidBy, shares, group_id: groupId,
+      // Only an expense you paid keeps its card charge, or stays "paid outside your accounts".
+      transaction_id: youPaid ? charge?.id ?? null : null,
+      standalone: youPaid && !charge && (editing?.standalone ?? false),
     };
     try {
-      await db.addShared(expense);
-      setDescription("");
-      setAmount("");
-      setCustom({});
-      setYourShareText("");
-      onSaved();
+      if (editing) await db.updateShared(editing.id, expense);
+      else await db.addShared(expense);
+      if (!editing && !fromCharge) setDraft({ ...startFrom(null, null), date, category, groupId, payer, paidBy, withIds });
+      onDone();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -295,37 +406,46 @@ function ExpenseForm({ people, groups, onPeople, onSaved }: {
 
   return (
     <Card className="p-6 mb-6">
-      <CardTitle>Add shared expense</CardTitle>
+      <CardTitle actions={(editing || fromCharge) && <button className={buttonGhost} onClick={onDone}>Cancel</button>}>
+        {editing ? "Edit shared expense" : fromCharge ? "Split a card charge" : "Add shared expense"}
+      </CardTitle>
+      {charge && (
+        <p className="mb-4 rounded-lg bg-surface-muted px-4 py-2.5 text-sm text-ink-soft">
+          {payer === "me"
+            ? <>Linked to the card charge <span className="font-medium text-ink">{charge.description}</span> ({formatMoney(charge.amount_cents)}): it counts as your share, not the full amount.</>
+            : <>Someone else paid, so this won't stay linked to the card charge {charge.description}.</>}
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
           <label className={label}>Description</label>
-          <input value={description} onChange={(e) => setDescription(e.target.value)} className={`w-full ${field}`} placeholder="Dinner at Olive Garden" />
+          <input value={description} onChange={(e) => set({ description: e.target.value })} className={`w-full ${field}`} placeholder="Dinner at Olive Garden" />
         </div>
         <div>
           <label className={label}>Amount</label>
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="0.00"
+          <input value={amount} onChange={(e) => set({ amount: e.target.value })} inputMode="decimal" placeholder="0.00"
             className={`w-full tabular-nums ${field} ${parseDollars(amount) === undefined ? "border-red-500" : ""}`} />
         </div>
         <div>
           <label className={label}>Category</label>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} className={`w-full ${field}`}>
+          <select value={category} onChange={(e) => set({ category: e.target.value })} className={`w-full ${field}`}>
             {reference?.categories.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
         <div>
           <label className={label}>Date</label>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`w-full ${field}`} />
+          <input type="date" value={date} onChange={(e) => set({ date: e.target.value })} className={`w-full ${field}`} />
         </div>
       </div>
 
       <div className="mt-5">
         <label className={label}>Who paid?</label>
         <div className="grid grid-cols-2 gap-3 md:max-w-md">
-          <button type="button" className={toggleButton(payer === "me")} onClick={() => setPayer("me")}>I paid</button>
-          <button type="button" className={toggleButton(payer === "them")} onClick={() => setPayer("them")}>Someone else paid</button>
+          <button type="button" className={toggleButton(payer === "me")} onClick={() => set({ payer: "me" })}>I paid</button>
+          <button type="button" className={toggleButton(payer === "them")} onClick={() => set({ payer: "them" })}>Someone else paid</button>
         </div>
         {payer === "them" && (
-          <select value={paidBy ?? ""} onChange={(e) => setPaidBy(e.target.value ? Number(e.target.value) : null)} className={`mt-3 w-full md:max-w-md ${field}`}>
+          <select value={paidBy ?? ""} onChange={(e) => set({ paidBy: e.target.value ? Number(e.target.value) : null })} className={`mt-3 w-full md:max-w-md ${field}`}>
             <option value="">Who paid the bill?</option>
             {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
@@ -355,15 +475,15 @@ function ExpenseForm({ people, groups, onPeople, onSaved }: {
       <div className="mt-5">
         <label className={label}>How is it split?</label>
         <div className="grid grid-cols-2 gap-3 md:max-w-md">
-          <button type="button" className={toggleButton(mode === "equal")} onClick={() => setMode("equal")}>Equally</button>
-          <button type="button" className={toggleButton(mode === "custom")} onClick={() => setMode("custom")}>Custom amounts</button>
+          <button type="button" className={toggleButton(mode === "equal")} onClick={() => set({ mode: "equal" })}>Equally</button>
+          <button type="button" className={toggleButton(mode === "custom")} onClick={() => set({ mode: "custom" })}>Custom amounts</button>
         </div>
         {mode === "custom" && payer === "me" && withIds.length > 0 && (
           <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
             {withIds.map((id) => (
               <div key={id}>
                 <label className={label}>{people.find((p) => p.id === id)?.name} owes</label>
-                <input value={custom[id] ?? ""} onChange={(e) => setCustom((c) => ({ ...c, [id]: e.target.value }))}
+                <input value={custom[id] ?? ""} onChange={(e) => set({ custom: { ...custom, [id]: e.target.value } })}
                   inputMode="decimal" placeholder="0.00" className={`w-full tabular-nums ${field}`} />
               </div>
             ))}
@@ -372,7 +492,7 @@ function ExpenseForm({ people, groups, onPeople, onSaved }: {
         {mode === "custom" && payer === "them" && (
           <div className="mt-3 md:max-w-xs">
             <label className={label}>Your share</label>
-            <input value={yourShareText} onChange={(e) => setYourShareText(e.target.value)} inputMode="decimal" placeholder="0.00"
+            <input value={yourShareText} onChange={(e) => set({ yourShareText: e.target.value })} inputMode="decimal" placeholder="0.00"
               className={`w-full tabular-nums ${field}`} />
           </div>
         )}
@@ -380,9 +500,9 @@ function ExpenseForm({ people, groups, onPeople, onSaved }: {
 
       <div className="mt-6 flex flex-wrap items-center gap-4">
         <button onClick={save} disabled={saving || problem !== null} className={buttonPrimary}>
-          {saving ? "Saving…" : "Save shared expense"}
+          {saving ? "Saving…" : editing ? "Save changes" : "Save shared expense"}
         </button>
-        {total > 0 && yourShare !== undefined && yourShare >= 0 && yourShare <= total && (
+        {!problem && yourShare !== undefined && (
           <span className="text-sm text-muted">
             Your share <span className="font-semibold text-ink tabular-nums">{formatMoney(yourShare)}</span>
             {payer === "me"
@@ -393,7 +513,7 @@ function ExpenseForm({ people, groups, onPeople, onSaved }: {
         {problem && (description || amount) && <span className="text-sm text-muted">{problem}</span>}
         {error && <span className="text-sm text-red-600 dark:text-red-400">{error}</span>}
       </div>
-      {payer === "me" && (
+      {payer === "me" && !charge && (
         <p className="mt-3 text-xs text-faint">
           Paid by card? Link it to the card charge on Reconcile so the charge counts as your share instead of the full {total ? formatMoney(total) : "amount"}.
         </p>
@@ -402,3 +522,63 @@ function ExpenseForm({ people, groups, onPeople, onSaved }: {
   );
 }
 
+function PaymentForm({ people, initial, onSave }: {
+  people: Person[];
+  initial: { personId: number; direction: Settlement["direction"] } | null;
+  onSave: (payment: Omit<Settlement, "id" | "name">) => Promise<boolean>;
+}) {
+  const [personId, setPersonId] = useState<number | null>(initial?.personId ?? null);
+  const [direction, setDirection] = useState<Settlement["direction"]>(initial?.direction ?? "from_them");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(today);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const cents = parseDollars(amount);
+  const person = people.find((p) => p.id === personId);
+
+  const save = async () => {
+    if (personId === null || !cents) return;
+    setSaving(true);
+    const saved = await onSave({ person_id: personId, direction, cents, date, note: note.trim() || null });
+    setSaving(false);
+    if (saved) {
+      setAmount("");
+      setNote("");
+    }
+  };
+
+  return (
+    <div id="record-payment" className="mb-5 rounded-xl border border-line p-4">
+      <p className="mb-3 text-sm font-medium text-ink-soft">Record a payment</p>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_8rem_10rem]">
+        <select value={personId ?? ""} onChange={(e) => setPersonId(e.target.value ? Number(e.target.value) : null)}
+          className={field} aria-label="Person" autoFocus={initial !== null}>
+          <option value="">Who?</option>
+          {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <select value={direction} onChange={(e) => setDirection(e.target.value as Settlement["direction"])}
+          className={field} aria-label="Who paid">
+          <option value="from_them">{person ? `${person.name} paid me` : "They paid me"}</option>
+          <option value="to_them">{person ? `I paid ${person.name}` : "I paid them"}</option>
+        </select>
+        <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="0.00"
+          aria-label="Amount" className={`tabular-nums ${field} ${cents === undefined ? "border-red-500" : ""}`} />
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date" className={field} />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional), e.g. Venmo"
+          aria-label="Note" className={`min-w-48 flex-1 ${field}`} />
+        <button className={buttonPrimary} disabled={saving || personId === null || !cents} onClick={save}>
+          {saving ? "Saving…" : "Record payment"}
+        </button>
+      </div>
+      {person && person.balance_cents !== 0 && (
+        <p className="mt-2 text-xs text-faint">
+          {person.balance_cents > 0
+            ? `${person.name} owes you ${formatMoney(person.balance_cents)}`
+            : `You owe ${person.name} ${formatMoney(-person.balance_cents)}`}. Payments change the balance, never your spending.
+        </p>
+      )}
+    </div>
+  );
+}

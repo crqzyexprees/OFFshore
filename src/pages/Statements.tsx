@@ -13,6 +13,7 @@ export function Statements({ accounts }: { accounts: Account[] }) {
   const [uploading, setUploading] = useState(false);
   const [confirming, setConfirming] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = () => db.getStatements().then(setStatements, (e) => setError(String(e.message ?? e)));
   useEffect(() => {
@@ -21,8 +22,15 @@ export function Statements({ accounts }: { accounts: Account[] }) {
 
   const remove = async (id: number) => {
     setConfirming(null);
+    setNotice(null);
     try {
-      await db.deleteStatement(id);
+      const { unlinked_shared } = await db.deleteStatement(id);
+      if (unlinked_shared.length > 0) {
+        setNotice(
+          `${unlinked_shared.map((e) => `“${e.description}”`).join(", ")} ${unlinked_shared.length === 1 ? "is" : "are"} ` +
+            "no longer linked to a card charge. Link again on Reconcile once you import the statement again."
+        );
+      }
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -53,6 +61,7 @@ export function Statements({ accounts }: { accounts: Account[] }) {
       />
 
       {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {notice && <p className="mb-4 text-sm text-amber-800 dark:text-amber-300">{notice}</p>}
 
       {showUploader && (
         <Card className="p-6 mb-6 max-w-2xl">
@@ -93,7 +102,11 @@ export function Statements({ accounts }: { accounts: Account[] }) {
                   </div>
                   {confirming === s.id ? (
                     <span className="flex items-center gap-2 text-sm">
-                      <span className="text-muted">Delete it and its transactions?</span>
+                      <span className="text-muted">
+                        Delete it and its transactions?
+                        {s.linked_shared > 0 &&
+                          ` ${s.linked_shared} shared expense${s.linked_shared === 1 ? "" : "s"} will be unlinked.`}
+                      </span>
                       <button onClick={() => remove(s.id)} className="rounded-md bg-red-600 px-2.5 py-1 font-medium text-white hover:bg-red-700">
                         Delete
                       </button>

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from backend import sharing
-from backend.ledger import LedgerError
+from backend.ledger import LedgerError, unit_of_work
 from backend.prediction import CategoryPredictor, NoModel
 from backend.vocabulary import CATEGORIES, FALLBACK_CATEGORY
 
@@ -161,13 +161,11 @@ def import_splitwise(
     result = ImportResult(skipped=list(file.rejected))
     others = [m for m in file.members if m != your_name]
 
-    conn.commit()
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        person = {m: _person(conn, m) for m in others}
+    with unit_of_work(conn):
+        person = {m: sharing.person_named(conn, m, note="From Splitwise") for m in others}
         group_id = None
         if group_name and group_name.strip():
-            group_id = _group(conn, group_name, person.values())
+            group_id = sharing.group_named(conn, group_name, list(person.values()))
         seen: Counter = Counter()
         for row in file.rows:
             identity = _identity(row)
@@ -190,10 +188,6 @@ def import_splitwise(
                     result.skipped.append({"line": row.line, "reason": outcome})
                 else:
                     result.imported += 1
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
     return result
 
 
@@ -210,21 +204,6 @@ def _already(conn, key: str) -> bool:
     )
 
 
-def _person(conn, name: str) -> int:
-    row = conn.execute("SELECT id FROM people WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
-    if row:
-        return row["id"]
-    return conn.execute("INSERT INTO people (name, note) VALUES (?, 'From Splitwise')", (name,)).lastrowid
-
-
-def _group(conn, name: str, member_ids) -> int:
-    row = conn.execute("SELECT id FROM groups WHERE name = ? COLLATE NOCASE", (name.strip(),)).fetchone()
-    group_id = row["id"] if row else conn.execute("INSERT INTO groups (name) VALUES (?)", (name.strip(),)).lastrowid
-    conn.executemany("INSERT OR IGNORE INTO group_members (group_id, person_id) VALUES (?, ?)",
-                     [(group_id, p) for p in member_ids])
-    return group_id
-
-
 def _import_payment(conn, row: Row, you: str, person: dict[str, int], key: str) -> bool:
     """A Settlement between the user and one member, or False if it's between others."""
     mine = row.nets.get(you, 0)
@@ -237,7 +216,7 @@ def _import_payment(conn, row: Row, you: str, person: dict[str, int], key: str) 
         return False
     sharing.add_settlement(conn, date=row.date.isoformat(), person_id=person[other], cents=abs(mine),
                            direction="to_them" if mine > 0 else "from_them",
-                           note=row.description, source_key=key, commit=False)
+                           note=row.description, source_key=key)
     return True
 
 
@@ -255,13 +234,11 @@ def _import_expense(conn, row, you, person, group_id, key, predictor):
         your_share = row.cost_cents - mine
         if your_share < 0 or your_share + sum(shares.values()) != row.cost_cents:
             return "the member amounts don't add up to the cost"
-        return sharing.add_expense(conn, sharing.NewExpense(your_share_cents=your_share, shares=shares, **common),
-                                   commit=False)
+        return sharing.add_expense(conn, sharing.NewExpense(your_share_cents=your_share, shares=shares, **common))
     if mine < 0 and payers:
         # Someone else paid (with several payers, the one who paid most).
         payer = max(payers, key=lambda m: row.nets[m])
-        return sharing.add_expense(conn, sharing.NewExpense(your_share_cents=-mine, paid_by=person[payer], **common),
-                                   commit=False)
+        return sharing.add_expense(conn, sharing.NewExpense(your_share_cents=-mine, paid_by=person[payer], **common))
     if mine > 0:
         return "several people paid, so your share can't be worked out; add it by hand"
     return None

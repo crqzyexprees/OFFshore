@@ -123,3 +123,90 @@ def test_groups_hold_people(conn, friends):
     assert [m["name"] for m in sharing.groups(conn)[0]["members"]] == ["Alex", "Priya"]
     sharing.remove_member(conn, group, friends[0])
     assert [m["name"] for m in sharing.groups(conn)[0]["members"]] == ["Priya"]
+
+
+def test_a_group_with_an_unknown_member_is_not_created(conn, friends):
+    with pytest.raises(LedgerError, match="Person not found"):
+        sharing.add_group(conn, "Trip", [friends[0], 999])
+    assert sharing.groups(conn) == []
+
+
+def test_a_refusal_inside_a_unit_of_work_stores_nothing(conn, friends):
+    with pytest.raises(LedgerError):
+        with ledger.unit_of_work(conn):
+            sharing.add_person(conn, "Sam")
+            sharing.add_expense(conn, dinner(*friends, transaction_id=12345))  # no such Purchase
+    assert [p["name"] for p in sharing.people(conn)] == ["Alex", "Priya"]
+    assert sharing.expenses(conn) == []
+
+
+def test_links_that_match_nothing_are_reported_on_reimport(conn, friends):
+    account_id = card_with(conn, "2026-11-02,OLIVE GARDEN,-90.00", "2026-11-03,COFFEE,-4.00")
+    expense = sharing.add_expense(conn, dinner(*friends))
+    sharing.link(conn, expense, tx_id(conn, "OLIVE GARDEN"))
+    corrected = b"Date,Description,Amount\n2026-11-02,OLIVE GARDEN,-95.00\n2026-11-03,COFFEE,-4.00\n"
+    result = import_statement(conn, read_export(corrected, "nov.csv"), account_id=account_id, period=NOVEMBER)
+    [lost] = result.unmatched_links
+    assert (lost.expense_id, lost.expense_description, lost.amount_cents) == (expense, "Dinner", 9000)
+    [unlinked] = sharing.expenses(conn)
+    assert unlinked["transaction"] is None and not unlinked["counted"]
+
+
+def test_deleting_a_statement_reports_the_expenses_it_unlinks(conn, friends):
+    card_with(conn, "2026-11-02,OLIVE GARDEN,-90.00", "2026-11-03,COFFEE,-4.00")
+    expense = sharing.add_expense(conn, dinner(*friends))
+    sharing.link(conn, expense, tx_id(conn, "OLIVE GARDEN"))
+    [statement] = ledger.statements(conn)
+    assert statement["linked_shared"] == 1
+    assert [e["id"] for e in ledger.delete_statement(conn, statement["id"])] == [expense]
+
+
+def test_a_linked_purchase_must_stay_a_purchase(conn, friends):
+    card_with(conn, "2026-11-02,OLIVE GARDEN,-90.00", "2026-11-03,COFFEE,-4.00")
+    olive = tx_id(conn, "OLIVE GARDEN")
+    sharing.link(conn, sharing.add_expense(conn, dinner(*friends)), olive)
+    with pytest.raises(LedgerError, match="Unlink it on Reconcile first"):
+        ledger.set_override(conn, olive, kind="peer_transfer", category=None)
+    ledger.set_override(conn, olive, kind=None, category="Dining")  # a Category is fine
+
+
+def test_counted_agrees_with_spending(conn, friends):
+    card_with(conn, "2026-11-02,OLIVE GARDEN,-90.00", "2026-11-03,COFFEE,-4.00")
+    olive = tx_id(conn, "OLIVE GARDEN")
+    expense = sharing.add_expense(conn, dinner(*friends))
+    sharing.link(conn, expense, olive)
+    # Bypass the guard, as a re-import whose rules now read the charge differently would.
+    conn.execute("UPDATE transactions SET kind = 'internal_transfer' WHERE id = ?", (olive,))
+    [e] = sharing.expenses(conn)
+    assert not e["counted"] and dining(conn) == 0
+
+
+def test_editing_an_expense_replaces_its_shares(conn, friends):
+    alex, priya = friends
+    card_with(conn, "2026-11-02,OLIVE GARDEN,-90.00", "2026-11-03,COFFEE,-4.00")
+    olive = tx_id(conn, "OLIVE GARDEN")
+    expense = sharing.add_expense(conn, dinner(alex, priya, transaction_id=olive))
+    sharing.update_expense(conn, expense, NewExpense(
+        date="2026-11-02", description="Dinner, Alex only", category="Dining", total_cents=9000,
+        your_share_cents=4500, shares={alex: 4500}, transaction_id=olive))
+    [e] = sharing.expenses(conn)
+    assert (e["description"], e["your_share_cents"], e["transaction"]["id"]) == ("Dinner, Alex only", 4500, olive)
+    assert sharing.balances(conn) == {alex: 4500}
+    # Someone else paid after all: no longer the user's Purchase, so no Link.
+    with pytest.raises(LedgerError, match="Only an expense you paid"):
+        sharing.update_expense(conn, expense, NewExpense(
+            date="2026-11-02", description="Dinner", category="Dining", total_cents=9000,
+            your_share_cents=3000, paid_by=alex, transaction_id=olive))
+    sharing.update_expense(conn, expense, NewExpense(
+        date="2026-11-02", description="Dinner", category="Dining", total_cents=9000,
+        your_share_cents=3000, paid_by=alex))
+    assert sharing.balances(conn) == {alex: -3000}
+
+
+def test_a_partial_payment_reduces_the_balance(conn, friends):
+    alex, priya = friends
+    sharing.add_expense(conn, dinner(alex, priya))
+    sharing.add_settlement(conn, date="2026-11-04", person_id=alex, cents=1000, direction="from_them", note="Venmo")
+    assert sharing.balances(conn) == {alex: 2000, priya: 3000}
+    with pytest.raises(LedgerError, match="Person not found"):
+        sharing.add_settlement(conn, date="2026-11-04", person_id=999, cents=1000, direction="from_them")

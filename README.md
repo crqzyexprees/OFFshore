@@ -15,6 +15,9 @@ A fully local desktop app (**Tauri + React** UI, **Python** backend) that reads 
 - **Budgets** — a monthly amount per Category, carried forward until you change it, shown against Spending
 - **Backups** — save everything to `~/Documents/SplitLens Backups/`, optionally encrypted with a password (scrypt + AES-256-GCM); restoring keeps a copy of the data it replaces
 - **Overrides** — correct a Transaction's kind or Category; re-importing a Statement keeps them
+- **Shared expenses** — split costs with People and Groups, by hand or imported from Splitwise; only your Share counts as Spending ([ADR 0007](docs/adr/0007-spending-counts-your-share-of-shared-expenses.md)). Split a card charge straight from Personal, edit an expense, and record full or partial payments
+- **Reconcile** — link each shared expense you paid to the card charge that paid for it; links survive re-importing a Statement, and any that can't are reported
+- **Spreadsheet copy** — all your data as a zip of CSV files, readable in any spreadsheet app
 
 ## Architecture
 
@@ -145,6 +148,18 @@ supported and used when no embedding model is installed; see
 | GET | `/api/backups` | Where Backups are saved |
 | POST | `/api/backups` | Save a Backup (`password` optional; without one it's a plain SQLite copy) |
 | POST | `/api/restore` | Replace all data with a Backup (multipart: `file`, `password` if encrypted) |
+| POST | `/api/spreadsheets` | Save a Spreadsheet copy (a zip of CSV files) beside the Backups |
+| GET | `/api/statements` | List Statements, with how many of their charges pay for shared expenses |
+| DELETE | `/api/statements/{id}` | Remove a Statement; returns the shared expenses it unlinks |
+| GET, POST | `/api/people` | People with their Balances; add one (`name`, `note`) |
+| POST | `/api/people/{id}/settle` | Record the Settlement that brings a Balance to zero |
+| GET, POST | `/api/groups` | Groups with their members; add one (`name`, `member_ids`) |
+| GET, POST | `/api/shared` | Shared expenses (`?month=`); add one (`paid_by` null when you paid, `shares`, optional `transaction_id`) |
+| PUT, DELETE | `/api/shared/{id}` | Edit or remove a shared expense |
+| POST | `/api/shared/{id}/link` | Link to the Purchase that paid for it (`transaction_id`, null unlinks) |
+| GET, POST | `/api/settlements` | Payments between you and a Person, any amount (`person_id`, `cents`, `direction`) |
+| GET | `/api/reconcile` | Suggested links and the shared expenses not counted yet |
+| POST | `/api/splitwise/preview`, `/api/splitwise/import` | Read a Splitwise export, then import it |
 | POST | `/api/import` | Import a Statement — PDF, CSV, OFX or QFX (multipart: `file`, optional `account_id`, `period_start`, `period_end`) |
 
 An import the backend can't complete on its own returns `422` with a `problem` code:

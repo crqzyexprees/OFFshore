@@ -7,23 +7,30 @@ was shared and with whom. Balances are always derived, never stored.
 
 import re
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date
 
-from backend.ledger import LedgerError, NotFound
+from backend.ledger import LedgerError, NotFound, unit_of_work
 from backend.vocabulary import CATEGORIES
 
 DIRECTIONS = ("to_them", "from_them")  # Settlement: user paid them / they paid the user
 
 
-def _commit(conn: sqlite3.Connection, sql: str, params=()) -> sqlite3.Cursor:
-    try:
-        cur = conn.execute(sql, params)
-    except sqlite3.IntegrityError as e:
-        conn.rollback()
-        raise LedgerError(_integrity_message(e)) from e
-    conn.commit()
-    return cur
+@contextmanager
+def _writing(conn: sqlite3.Connection):
+    """A unit of work (ledger.unit_of_work) whose constraint failures are
+    refusals in the user's words."""
+    with unit_of_work(conn):
+        try:
+            yield
+        except sqlite3.IntegrityError as e:
+            raise LedgerError(_integrity_message(e)) from e
+
+
+def _write(conn: sqlite3.Connection, sql: str, params=()) -> sqlite3.Cursor:
+    with _writing(conn):
+        return conn.execute(sql, params)
 
 
 def _integrity_message(e: sqlite3.IntegrityError) -> str:
@@ -54,18 +61,20 @@ def people(conn: sqlite3.Connection) -> list[dict]:
 
 
 def add_person(conn: sqlite3.Connection, name: str, note: str | None = None) -> int:
-    return _commit(conn, "INSERT INTO people (name, note) VALUES (?, ?)", (name.strip(), note or None)).lastrowid
+    if not name.strip():
+        raise LedgerError("Enter a name.")
+    return _write(conn, "INSERT INTO people (name, note) VALUES (?, ?)", (name.strip(), note or None)).lastrowid
 
 
-def person_named(conn: sqlite3.Connection, name: str) -> int:
-    """The Person with this name, added if they're new."""
+def person_named(conn: sqlite3.Connection, name: str, note: str | None = None) -> int:
+    """The Person with this name, added (with `note`) if they're new."""
     row = conn.execute("SELECT id FROM people WHERE name = ? COLLATE NOCASE", (name.strip(),)).fetchone()
-    return row["id"] if row else add_person(conn, name)
+    return row["id"] if row else add_person(conn, name, note)
 
 
 def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
     """Refused while any Shared Expense or Settlement involves them."""
-    if _commit(conn, "DELETE FROM people WHERE id = ?", (person_id,)).rowcount == 0:
+    if _write(conn, "DELETE FROM people WHERE id = ?", (person_id,)).rowcount == 0:
         raise NotFound("Person not found")
 
 
@@ -85,28 +94,43 @@ def groups(conn: sqlite3.Connection) -> list[dict]:
 
 
 def add_group(conn: sqlite3.Connection, name: str, member_ids: list[int] = ()) -> int:
-    group_id = _commit(conn, "INSERT INTO groups (name) VALUES (?)", (name.strip(),)).lastrowid
-    for person_id in member_ids:
-        add_member(conn, group_id, person_id)
+    """All or nothing: an unknown member leaves no Group behind."""
+    if not name.strip():
+        raise LedgerError("Name the Group.")
+    with _writing(conn):
+        group_id = conn.execute("INSERT INTO groups (name) VALUES (?)", (name.strip(),)).lastrowid
+        for person_id in member_ids:
+            add_member(conn, group_id, person_id)
     return group_id
 
 
-def group_named(conn: sqlite3.Connection, name: str) -> int:
-    row = conn.execute("SELECT id FROM groups WHERE name = ? COLLATE NOCASE", (name.strip(),)).fetchone()
-    return row["id"] if row else add_group(conn, name)
+def group_named(conn: sqlite3.Connection, name: str, member_ids: list[int] = ()) -> int:
+    """The Group with this name, added if it's new, with these members in it."""
+    with _writing(conn):
+        row = conn.execute("SELECT id FROM groups WHERE name = ? COLLATE NOCASE", (name.strip(),)).fetchone()
+        if row is None:
+            return add_group(conn, name, member_ids)
+        for person_id in member_ids:
+            add_member(conn, row["id"], person_id)
+        return row["id"]
 
 
 def add_member(conn: sqlite3.Connection, group_id: int, person_id: int) -> None:
-    _commit(conn, "INSERT OR IGNORE INTO group_members (group_id, person_id) VALUES (?, ?)", (group_id, person_id))
+    with _writing(conn):
+        if not conn.execute("SELECT 1 FROM groups WHERE id = ?", (group_id,)).fetchone():
+            raise NotFound("Group not found")
+        if not conn.execute("SELECT 1 FROM people WHERE id = ?", (person_id,)).fetchone():
+            raise NotFound("Person not found")
+        conn.execute("INSERT OR IGNORE INTO group_members (group_id, person_id) VALUES (?, ?)", (group_id, person_id))
 
 
 def remove_member(conn: sqlite3.Connection, group_id: int, person_id: int) -> None:
-    _commit(conn, "DELETE FROM group_members WHERE group_id = ? AND person_id = ?", (group_id, person_id))
+    _write(conn, "DELETE FROM group_members WHERE group_id = ? AND person_id = ?", (group_id, person_id))
 
 
 def delete_group(conn: sqlite3.Connection, group_id: int) -> None:
     """Its Shared Expenses stay; they just no longer belong to a Group."""
-    if _commit(conn, "DELETE FROM groups WHERE id = ?", (group_id,)).rowcount == 0:
+    if _write(conn, "DELETE FROM groups WHERE id = ?", (group_id,)).rowcount == 0:
         raise NotFound("Group not found")
 
 
@@ -131,7 +155,8 @@ class NewExpense:
     source_key: str | None = None
 
 
-def add_expense(conn: sqlite3.Connection, e: NewExpense, *, commit: bool = True) -> int:
+def _check_expense(conn: sqlite3.Connection, e: NewExpense, expense_id: int | None = None) -> dict[int, int]:
+    """Refuses an expense that can't be recorded; returns the non-zero Shares."""
     _check_date(e.date)
     if not e.description.strip():
         raise LedgerError("Describe the expense.")
@@ -152,10 +177,16 @@ def add_expense(conn: sqlite3.Connection, e: NewExpense, *, commit: bool = True)
             raise LedgerError("Only record others' shares for expenses you paid.")
         if e.transaction_id is not None or e.standalone:
             raise LedgerError("Only an expense you paid can be linked to your Purchase.")
+    if e.transaction_id is not None and e.standalone:
+        raise LedgerError("An expense linked to a Purchase isn't paid outside your accounts.")
     if e.transaction_id is not None:
-        _check_linkable(conn, e.transaction_id)
+        _check_linkable(conn, e.transaction_id, expense_id)
+    return shares
 
-    try:
+
+def add_expense(conn: sqlite3.Connection, e: NewExpense) -> int:
+    shares = _check_expense(conn, e)
+    with _writing(conn):
         expense_id = conn.execute(
             """INSERT INTO shared_expenses (date, description, category, total_cents, your_share_cents,
                                             paid_by, group_id, transaction_id, standalone, source_key)
@@ -167,12 +198,27 @@ def add_expense(conn: sqlite3.Connection, e: NewExpense, *, commit: bool = True)
             "INSERT INTO shares (expense_id, person_id, cents) VALUES (?, ?, ?)",
             [(expense_id, person_id, cents) for person_id, cents in shares.items()],
         )
-    except sqlite3.IntegrityError as err:
-        conn.rollback()
-        raise LedgerError(_integrity_message(err)) from err
-    if commit:
-        conn.commit()
     return expense_id
+
+
+def update_expense(conn: sqlite3.Connection, expense_id: int, e: NewExpense) -> None:
+    """Replaces everything about a Shared Expense but where it came from
+    (an expense imported from Splitwise stays recognised on the next import)."""
+    _expense(conn, expense_id)
+    shares = _check_expense(conn, e, expense_id)
+    with _writing(conn):
+        conn.execute(
+            """UPDATE shared_expenses SET date = ?, description = ?, category = ?, total_cents = ?,
+                      your_share_cents = ?, paid_by = ?, group_id = ?, transaction_id = ?, standalone = ?
+               WHERE id = ?""",
+            (e.date, e.description.strip(), e.category, e.total_cents, e.your_share_cents,
+             e.paid_by, e.group_id, e.transaction_id, int(e.standalone), expense_id),
+        )
+        conn.execute("DELETE FROM shares WHERE expense_id = ?", (expense_id,))
+        conn.executemany(
+            "INSERT INTO shares (expense_id, person_id, cents) VALUES (?, ?, ?)",
+            [(expense_id, person_id, cents) for person_id, cents in shares.items()],
+        )
 
 
 def expenses(conn: sqlite3.Connection, month: str | None = None) -> list[dict]:
@@ -181,7 +227,8 @@ def expenses(conn: sqlite3.Connection, month: str | None = None) -> list[dict]:
     where, params = ("WHERE strftime('%Y-%m', e.date) = ?", (month,)) if month else ("", ())
     rows = conn.execute(
         f"""SELECT e.*, p.name AS paid_by_name, g.name AS group_name,
-                   t.date AS tx_date, t.description AS tx_description, t.amount_cents AS tx_amount_cents
+                   t.date AS tx_date, t.description AS tx_description, t.amount_cents AS tx_amount_cents,
+                   EXISTS (SELECT 1 FROM spending_items i WHERE i.expense_id = e.id) AS counted
             FROM shared_expenses e
             LEFT JOIN people p ON p.id = e.paid_by
             LEFT JOIN groups g ON g.id = e.group_id
@@ -207,17 +254,18 @@ def expenses(conn: sqlite3.Connection, month: str | None = None) -> list[dict]:
             "shares": sorted(shares.get(r["id"], []), key=lambda s: s["name"].lower()),
             "transaction": {"id": r["transaction_id"], "date": r["tx_date"], "description": r["tx_description"],
                             "amount_cents": r["tx_amount_cents"]} if linked else None,
-            "counted": r["paid_by"] is not None or linked or bool(r["standalone"]),
+            # Read from spending_items, the one definition of Spending (docs/adr/0007).
+            "counted": bool(r["counted"]),
         })
     return result
 
 
 def delete_expense(conn: sqlite3.Connection, expense_id: int) -> None:
-    if _commit(conn, "DELETE FROM shared_expenses WHERE id = ?", (expense_id,)).rowcount == 0:
+    if _write(conn, "DELETE FROM shared_expenses WHERE id = ?", (expense_id,)).rowcount == 0:
         raise NotFound("Shared Expense not found")
 
 
-def _check_linkable(conn: sqlite3.Connection, transaction_id: int) -> None:
+def _check_linkable(conn: sqlite3.Connection, transaction_id: int, expense_id: int | None = None) -> None:
     tx = conn.execute(
         "SELECT effective_kind FROM transaction_view WHERE id = ?", (transaction_id,)
     ).fetchone()
@@ -225,7 +273,9 @@ def _check_linkable(conn: sqlite3.Connection, transaction_id: int) -> None:
         raise NotFound("Transaction not found")
     if tx["effective_kind"] != "purchase":
         raise LedgerError("Only a Purchase can be linked to a Shared Expense.")
-    if conn.execute("SELECT 1 FROM shared_expenses WHERE transaction_id = ?", (transaction_id,)).fetchone():
+    if conn.execute(
+        "SELECT 1 FROM shared_expenses WHERE transaction_id = ? AND id IS NOT ?", (transaction_id, expense_id)
+    ).fetchone():
         raise LedgerError("That Purchase is already linked to another Shared Expense.")
 
 
@@ -240,14 +290,14 @@ def link(conn: sqlite3.Connection, expense_id: int, transaction_id: int) -> None
     """Links a Shared Expense the user paid to the Purchase that paid for it."""
     if _expense(conn, expense_id)["paid_by"] is not None:
         raise LedgerError("Only an expense you paid can be linked to your Purchase.")
-    _check_linkable(conn, transaction_id)
-    _commit(conn, "UPDATE shared_expenses SET transaction_id = ?, standalone = 0 WHERE id = ?",
+    _check_linkable(conn, transaction_id, expense_id)
+    _write(conn, "UPDATE shared_expenses SET transaction_id = ?, standalone = 0 WHERE id = ?",
             (transaction_id, expense_id))
 
 
 def unlink(conn: sqlite3.Connection, expense_id: int) -> None:
     _expense(conn, expense_id)
-    _commit(conn, "UPDATE shared_expenses SET transaction_id = NULL WHERE id = ?", (expense_id,))
+    _write(conn, "UPDATE shared_expenses SET transaction_id = NULL WHERE id = ?", (expense_id,))
 
 
 def set_standalone(conn: sqlite3.Connection, expense_id: int, standalone: bool) -> None:
@@ -258,31 +308,27 @@ def set_standalone(conn: sqlite3.Connection, expense_id: int, standalone: bool) 
         raise LedgerError("Only an expense you paid can be marked as paid outside your accounts.")
     if standalone and e["transaction_id"] is not None:
         raise LedgerError("Unlink it from its Purchase first.")
-    _commit(conn, "UPDATE shared_expenses SET standalone = ? WHERE id = ?", (int(standalone), expense_id))
+    _write(conn, "UPDATE shared_expenses SET standalone = ? WHERE id = ?", (int(standalone), expense_id))
 
 
 # ── Settlements and Balances ────────────────────────────────────────────────
 
 def add_settlement(
     conn: sqlite3.Connection, *, date: str, person_id: int, cents: int, direction: str,
-    note: str | None = None, source_key: str | None = None, commit: bool = True,
+    note: str | None = None, source_key: str | None = None,
 ) -> int:
     _check_date(date)
     if direction not in DIRECTIONS:
         raise LedgerError(f"Unknown direction: {direction}")
     if cents <= 0:
         raise LedgerError("A Settlement must be more than zero.")
-    try:
-        settlement_id = conn.execute(
+    with _writing(conn):
+        if not conn.execute("SELECT 1 FROM people WHERE id = ?", (person_id,)).fetchone():
+            raise NotFound("Person not found")
+        return conn.execute(
             "INSERT INTO settlements (date, person_id, cents, direction, note, source_key) VALUES (?, ?, ?, ?, ?, ?)",
-            (date, person_id, cents, direction, note, source_key),
+            (date, person_id, cents, direction, note or None, source_key),
         ).lastrowid
-    except sqlite3.IntegrityError as e:
-        conn.rollback()
-        raise LedgerError(_integrity_message(e)) from e
-    if commit:
-        conn.commit()
-    return settlement_id
 
 
 def settle_up(conn: sqlite3.Connection, person_id: int, on: str) -> int | None:
@@ -303,7 +349,7 @@ def settlements(conn: sqlite3.Connection) -> list[dict]:
 
 
 def delete_settlement(conn: sqlite3.Connection, settlement_id: int) -> None:
-    if _commit(conn, "DELETE FROM settlements WHERE id = ?", (settlement_id,)).rowcount == 0:
+    if _write(conn, "DELETE FROM settlements WHERE id = ?", (settlement_id,)).rowcount == 0:
         raise NotFound("Settlement not found")
 
 

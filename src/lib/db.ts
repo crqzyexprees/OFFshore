@@ -80,6 +80,8 @@ export interface Transaction {
   overridden: boolean;
   override_kind: Kind | null;
   override_category: string | null;
+  /** The Shared Expense this Purchase pays for, if any. */
+  shared_expense_id: number | null;
 }
 
 type Named = { id: string; name: string };
@@ -108,6 +110,8 @@ export interface Statement {
   file_name: string | null;
   imported_at: string;
   transactions: number;
+  /** How many of its Transactions pay for a Shared Expense. */
+  linked_shared: number;
 }
 
 export interface Person {
@@ -215,6 +219,14 @@ export interface ImportResult {
     override_kind: Kind | null;
     override_category: string | null;
   }[];
+  /** Shared Expenses whose card charge isn't in the new import: unlinked, waiting on Reconcile. */
+  unmatched_links: {
+    expense_id: number;
+    expense_description: string;
+    date: string;
+    description: string;
+    amount_cents: number;
+  }[];
 }
 
 export interface ImportOptions {
@@ -251,7 +263,9 @@ export const db = {
   getStatements: () => request<Statement[]>("/api/statements"),
 
   /** Removes the Statement with its Transactions and any edits made to them. */
-  deleteStatement: (id: number) => request<{ ok: true }>(`/api/statements/${id}`, { method: "DELETE" }),
+  /** `unlinked_shared`: Shared Expenses its charges paid for, now waiting on Reconcile again. */
+  deleteStatement: (id: number) =>
+    request<{ ok: true; unlinked_shared: { id: number; date: string; description: string }[] }>(`/api/statements/${id}`, { method: "DELETE" }),
 
   getSpending: (month: string) => request<Spending>(`/api/spending/${month}`),
 
@@ -275,6 +289,8 @@ export const db = {
   getShared: (month?: string) => request<SharedExpense[]>(`/api/shared${month ? `?month=${month}` : ""}`),
   addShared: (expense: NewSharedExpense) =>
     request<{ id: number }>("/api/shared", { method: "POST", body: JSON.stringify(expense) }),
+  updateShared: (id: number, expense: NewSharedExpense) =>
+    request<{ ok: true }>(`/api/shared/${id}`, { method: "PUT", body: JSON.stringify(expense) }),
   deleteShared: (id: number) => request<{ ok: true }>(`/api/shared/${id}`, { method: "DELETE" }),
   /** Links the expense to the Purchase that paid for it; null unlinks. */
   linkShared: (id: number, transactionId: number | null) =>
@@ -284,6 +300,9 @@ export const db = {
     request<{ ok: true }>(`/api/shared/${id}/standalone`, { method: "POST", body: JSON.stringify({ standalone }) }),
 
   getSettlements: () => request<Settlement[]>("/api/settlements"),
+  /** A payment between you and one Person, for any amount: it moves their Balance, never Spending. */
+  addSettlement: (settlement: Omit<Settlement, "id" | "name">) =>
+    request<{ id: number }>("/api/settlements", { method: "POST", body: JSON.stringify(settlement) }),
   deleteSettlement: (id: number) => request<{ ok: true }>(`/api/settlements/${id}`, { method: "DELETE" }),
 
   getReconcile: () => request<{ suggestions: LinkSuggestion[]; unlinked: SharedExpense[] }>("/api/reconcile"),
@@ -340,6 +359,9 @@ export const db = {
       method: "POST",
       body: JSON.stringify({ password }),
     }),
+
+  /** Saves a Spreadsheet copy of all data (a zip of CSV files) beside the Backups. */
+  saveSpreadsheets: () => request<{ path: string }>("/api/spreadsheets", { method: "POST" }),
 
   /** Replaces all data with the Backup. `previous` is where the data as it was is saved. */
   restoreBackup: (file: File, password: string | null) => {

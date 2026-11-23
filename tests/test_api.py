@@ -181,3 +181,53 @@ def test_splitwise_preview_then_import(client):
     result = client.post("/api/splitwise/import", files={"file": ("s.csv", csv)}, data={"your_name": "Sam"}).json()
     assert result["imported"] == 1
     assert client.post("/api/splitwise/import", files={"file": ("s.csv", csv)}, data={"your_name": "Bob"}).status_code == 400
+
+
+def test_edit_split_from_a_charge_and_pay_part(client):
+    add_card(client)
+    upload(client, chase("12/10 OLIVE GARDEN 90.00"))
+    [charge] = client.get("/api/transactions").json()
+    assert charge["shared_expense_id"] is None
+    alex = client.post("/api/people", json={"name": "Alex"}).json()["id"]
+    # "Split this": an expense made from the charge is linked from the start.
+    body = {"date": "2025-12-10", "description": "OLIVE GARDEN", "category": "Dining", "total_cents": 9000,
+            "your_share_cents": 4500, "shares": [{"person_id": alex, "cents": 4500}], "transaction_id": charge["id"]}
+    expense = client.post("/api/shared", json=body).json()["id"]
+    assert client.get("/api/transactions").json()[0]["shared_expense_id"] == expense
+    assert client.post("/api/shared", json=body).status_code == 400  # one expense per charge
+
+    edited = {**body, "description": "Dinner", "your_share_cents": 3000, "shares": [{"person_id": alex, "cents": 6000}]}
+    assert client.put(f"/api/shared/{expense}", json=edited).status_code == 200
+    assert client.get("/api/people").json()[0]["balance_cents"] == 6000
+    assert client.put("/api/shared/999", json=edited).status_code == 404
+
+    paid = {"date": "2025-12-12", "person_id": alex, "cents": 2500, "direction": "from_them", "note": "Venmo"}
+    assert client.post("/api/settlements", json=paid).status_code == 200
+    assert client.get("/api/people").json()[0]["balance_cents"] == 3500
+
+    [statement] = client.get("/api/statements").json()
+    assert statement["linked_shared"] == 1
+    unlinked = client.delete(f"/api/statements/{statement['id']}").json()["unlinked_shared"]
+    assert [e["description"] for e in unlinked] == ["Dinner"]
+
+
+def test_spreadsheet_copy_is_readable(client, tmp_path, monkeypatch):
+    import csv
+    import io
+    import zipfile
+
+    monkeypatch.setattr(api, "BACKUP_DIR", tmp_path / "copies")
+    add_card(client)
+    upload(client, chase("12/10 OLIVE GARDEN 90.00"))
+    alex = client.post("/api/people", json={"name": "Alex"}).json()["id"]
+    client.post("/api/shared", json={
+        "date": "2025-12-11", "description": "Concert", "category": "Entertainment",
+        "total_cents": 5000, "your_share_cents": 2500, "paid_by": alex})
+    path = Path(client.post("/api/spreadsheets").json()["path"])
+    assert path.parent == tmp_path / "copies" and oct(path.stat().st_mode & 0o777) == "0o600"
+    with zipfile.ZipFile(path) as z:
+        read = lambda name: list(csv.reader(io.StringIO(z.read(name).decode("utf-8-sig"))))  # noqa: E731
+        assert read("transactions.csv")[1][2:5] == ["OLIVE GARDEN", "90.00", "out"]
+        assert read("spending.csv")[1:] == [["2025-12-10", "Other", "90.00", "OLIVE GARDEN"],
+                                            ["2025-12-11", "Entertainment", "25.00", "Concert"]]
+        assert read("people.csv")[1] == ["Alex", "", "-25.00"]

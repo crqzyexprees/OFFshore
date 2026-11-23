@@ -34,7 +34,9 @@ that include the user can't be split that way and are reported, not guessed. Eac
 keyed by its contents, so importing the same file again adds only new rows.
 
 A link to a Transaction survives the Statement being imported again: links are carried
-over by the same match as Overrides (docs/adr/0005).
+over by the same match as Overrides (docs/adr/0005). A Link that matches nothing in the
+new import is reported, like an unmatched Override, and the expense waits on Reconcile
+again. A Linked Purchase can't be given another kind while it is linked.
 
 ## Consequences
 

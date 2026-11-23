@@ -11,6 +11,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import date
 
+from backend.ledger import unit_of_work
 from backend.prediction import CategoryPredictor, NoModel
 from backend.statement_import.document import Document, Page, read_pdf
 from backend.statement_import.exports import Export, ExportRow, is_export, read_export
@@ -85,6 +86,18 @@ class UnmatchedOverride:
 
 
 @dataclass
+class UnmatchedLink:
+    """A Shared Expense whose Linked Purchase isn't in the new import, so it
+    was unlinked and waits on Reconcile again (docs/adr/0007)."""
+
+    expense_id: int
+    expense_description: str
+    date: str
+    description: str
+    amount_cents: int
+
+
+@dataclass
 class ImportResult:
     statement_id: int
     account_id: int
@@ -95,6 +108,7 @@ class ImportResult:
     replaced: bool
     rejected: list[dict] = field(default_factory=list)
     unmatched_overrides: list[UnmatchedOverride] = field(default_factory=list)
+    unmatched_links: list[UnmatchedLink] = field(default_factory=list)
 
     def to_json(self) -> dict:
         return {
@@ -147,7 +161,9 @@ def import_statement(
             rejected=rejected,
         )
 
-    statement_id, replaced, unmatched = _store(conn, account["id"], start, end, document.file_name, transactions)
+    statement_id, replaced, unmatched, unlinked = _store(
+        conn, account["id"], start, end, document.file_name, transactions
+    )
     return ImportResult(
         statement_id=statement_id,
         account_id=account["id"],
@@ -158,6 +174,7 @@ def import_statement(
         replaced=replaced,
         rejected=rejected,
         unmatched_overrides=unmatched,
+        unmatched_links=unlinked,
     )
 
 
@@ -213,10 +230,10 @@ def _other_accounts(conn, account_id: int) -> OtherAccounts:
 
 
 def _store(conn, account_id, start, end, file_name, transactions):
-    """Store atomically, replacing an earlier import of the same period."""
-    conn.commit()  # end any implicit transaction so BEGIN IMMEDIATE can start one
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    """Store atomically, replacing an earlier import of the same period.
+    Overrides and Links on the old Transactions carry over to the matching new
+    ones; those that match nothing are returned, never dropped silently."""
+    with unit_of_work(conn):
         old = conn.execute(
             "SELECT id FROM statements WHERE account_id = ? AND period_start = ? AND period_end = ?",
             (account_id, start.isoformat(), end.isoformat()),
@@ -225,12 +242,15 @@ def _store(conn, account_id, start, end, file_name, transactions):
         links = defaultdict(list)  # Shared Expenses Linked to the old Transactions (docs/adr/0007)
         if old:
             for r in conn.execute(
-                """SELECT e.id, t.date, t.description, t.amount_cents, t.direction
+                """SELECT e.id, e.description AS expense_description,
+                          t.date, t.description, t.amount_cents, t.direction
                    FROM shared_expenses e JOIN transactions t ON t.id = e.transaction_id
-                   WHERE t.statement_id = ?""",
+                   WHERE t.statement_id = ? ORDER BY e.id""",
                 (old["id"],),
             ):
-                links[(r["date"], r["description"], r["amount_cents"], r["direction"])].append(r["id"])
+                links[(r["date"], r["description"], r["amount_cents"], r["direction"])].append(
+                    (r["id"], r["expense_description"])
+                )
             for r in conn.execute(
                 """SELECT date, description, amount_cents, direction, override_kind, override_category
                    FROM transactions WHERE statement_id = ?
@@ -260,15 +280,17 @@ def _store(conn, account_id, start, end, file_name, transactions):
             ).lastrowid
             linked = links.get((when, description, cents, direction))
             if linked:
-                conn.execute("UPDATE shared_expenses SET transaction_id = ? WHERE id = ?", (new_id, linked.pop(0)))
+                conn.execute("UPDATE shared_expenses SET transaction_id = ? WHERE id = ?", (new_id, linked.pop(0)[0]))
 
         unmatched = [
             UnmatchedOverride(*key, o_kind, o_category)
             for key, remaining in overrides.items()
             for o_kind, o_category in remaining
         ]
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
-    return statement_id, old is not None, unmatched
+        # Their Transactions were deleted with the old Statement, so they're unlinked already.
+        unlinked = [
+            UnmatchedLink(expense_id, expense_description, when, description, cents)
+            for (when, description, cents, _direction), remaining in links.items()
+            for expense_id, expense_description in remaining
+        ]
+    return statement_id, old is not None, unmatched, unlinked

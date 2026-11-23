@@ -97,7 +97,7 @@ The connection between a Shared Expense the user paid and the Purchase that paid
 _Avoid_: Match, reconciliation
 
 **Settlement**:
-Money that pays off a Balance between the user and a Person. It changes the Balance, never Spending.
+Money paid between the user and a Person toward their Balance, all of it or part. It changes the Balance, never Spending.
 _Avoid_: Payment, settle-up, repayment
 
 **Balance**:
@@ -109,3 +109,13 @@ _Avoid_: Debt, IOU, net
 **Budget**:
 The most a user means to spend in a Category each month, compared with that month's Spending. A Budget applies from the month it is set until it is changed or removed; changing it never changes earlier months.
 _Avoid_: Limit, plan, target
+
+### Keeping data
+
+**Backup**:
+A copy of all the user's data that can be restored to replace what's there, optionally encrypted with a password.
+_Avoid_: Export, snapshot, save
+
+**Spreadsheet copy**:
+All the user's data as readable spreadsheets, for looking at or for other tools. Unlike a Backup it can't be restored.
+_Avoid_: Export (that's a bank's file), report, dump

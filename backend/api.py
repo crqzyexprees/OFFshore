@@ -12,7 +12,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from backend import backup, ledger, prediction, sharing, splitwise
+from backend import backup, ledger, prediction, sharing, splitwise, spreadsheets
 from backend.config import BACKUP_DIR, MODEL_DIR, SAFETY_DIR
 from backend.db import get_connection, init_db
 from backend.statement_import import BANKS, ImportProblem, import_statement, is_export, read_export, read_pdf
@@ -203,10 +203,10 @@ def get_statements():
 def delete_statement(statement_id: int):
     with closing(get_connection()) as conn:
         try:
-            ledger.delete_statement(conn, statement_id)
+            unlinked = ledger.delete_statement(conn, statement_id)
         except ledger.LedgerError as e:
             raise _refused(e) from e
-    return {"ok": True}
+    return {"ok": True, "unlinked_shared": unlinked}
 
 
 @app.get("/api/transactions")
@@ -319,6 +319,14 @@ def save_backup(body: BackupIn):
     return {"path": str(saved.path), "encrypted": saved.encrypted, "size": saved.size}
 
 
+@app.post("/api/spreadsheets")
+def save_spreadsheets():
+    """A Spreadsheet copy of all the data (a zip of CSV files) beside the Backups."""
+    with closing(get_connection()) as conn:
+        path = spreadsheets.save_spreadsheets(conn, BACKUP_DIR)
+    return {"path": str(path)}
+
+
 @app.post("/api/restore")
 def restore_backup(file: UploadFile = File(...), password: Optional[str] = Form(None)):
     data = file.file.read()
@@ -395,13 +403,22 @@ def get_shared(month: Optional[str] = None):
     return _sharing(lambda c: sharing.expenses(c, month))
 
 
-@app.post("/api/shared")
-def add_shared(body: ExpenseIn):
-    expense = sharing.NewExpense(
+def _new_expense(body: ExpenseIn) -> sharing.NewExpense:
+    return sharing.NewExpense(
         **body.model_dump(exclude={"shares"}),
         shares={s.person_id: s.cents for s in body.shares},
     )
-    return {"id": _sharing(lambda c: sharing.add_expense(c, expense))}
+
+
+@app.post("/api/shared")
+def add_shared(body: ExpenseIn):
+    return {"id": _sharing(lambda c: sharing.add_expense(c, _new_expense(body)))}
+
+
+@app.put("/api/shared/{expense_id}")
+def update_shared(expense_id: int, body: ExpenseIn):
+    _sharing(lambda c: sharing.update_expense(c, expense_id, _new_expense(body)))
+    return {"ok": True}
 
 
 @app.delete("/api/shared/{expense_id}")

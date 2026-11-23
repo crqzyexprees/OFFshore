@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, ReceiptText, Search, X } from "lucide-react";
+import { Pencil, ReceiptText, Search, Split, Users, X } from "lucide-react";
 import { db, Account, Kind, Spending, Transaction } from "../lib/db";
 import { categoryColor, CategoryIcon } from "../lib/categories";
 import { formatMoney, hasCategory, kindName, useReference } from "../lib/reference";
@@ -13,7 +13,13 @@ type Editing = { id: number; field: "kind" | "category" } | null;
 type Filter = { search: string; accountId: string; kind: string; category: string };
 const NO_FILTER: Filter = { search: "", accountId: "", kind: "", category: "" };
 
-export function Transactions({ accounts, onImport }: { accounts: Account[]; onImport: () => void }) {
+export function Transactions({ accounts, onImport, onSplit, onShared }: {
+  accounts: Account[];
+  onImport: () => void;
+  /** Opens a new Shared Expense made from this Purchase, linked to it. */
+  onSplit: (tx: Transaction) => void;
+  onShared: () => void;
+}) {
   const reference = useReference();
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
@@ -52,6 +58,7 @@ export function Transactions({ accounts, onImport }: { accounts: Account[]; onIm
   // Each edit becomes an Override; the other part of the Override is kept.
   const handleOverride = async (tx: Transaction, change: { kind?: Kind; category?: string }) => {
     setEditing(null);
+    setError(null);
     try {
       const { repredicted } = await db.setOverride(tx.id, {
         kind: change.kind ?? tx.override_kind,
@@ -183,6 +190,7 @@ export function Transactions({ accounts, onImport }: { accounts: Account[]; onIm
                 <th className="py-3 px-4 font-medium">Kind</th>
                 <th className="py-3 px-4 font-medium">Category</th>
                 <th className="py-3 px-4 font-medium text-right">Amount</th>
+                <th className="py-3 pr-4 font-medium"><span className="sr-only">Share</span></th>
               </tr>
             </thead>
             <tbody>
@@ -267,6 +275,25 @@ export function Transactions({ accounts, onImport }: { accounts: Account[]; onIm
                     >
                       {tx.direction === "in" ? "+" : ""}
                       {formatMoney(tx.amount_cents)}
+                    </td>
+                    <td className="py-3 pr-4 text-right whitespace-nowrap">
+                      {tx.shared_expense_id !== null ? (
+                        <button
+                          onClick={onShared}
+                          title="This charge pays for a shared expense; only your share counts"
+                          className="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2.5 py-0.5 text-xs text-ink-soft hover:text-ink"
+                        >
+                          <Users size={12} /> Shared
+                        </button>
+                      ) : tx.kind === "purchase" ? (
+                        <button
+                          onClick={() => onSplit(tx)}
+                          title="Split this charge with other people"
+                          className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-0.5 text-xs text-ink-soft hover:border-field hover:bg-surface-muted hover:text-ink"
+                        >
+                          <Split size={12} /> Split
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 );

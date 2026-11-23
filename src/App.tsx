@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { db, Account } from "./lib/db";
+import { db, Account, Transaction } from "./lib/db";
 import { connectBackend, inTauri, reportUiReady, shell } from "./lib/backend";
 import { Dashboard } from "./pages/Dashboard";
 import { Transactions } from "./pages/Transactions";
@@ -42,9 +42,12 @@ function App() {
   const setPage = (next: Page) => {
     window.location.hash = next;
     setPageState(next);
+    if (next !== "shared") setSplitFrom(null); // a charge to split only follows you straight to Shared
   };
   // Set when another page asks Shared to open on the Splitwise import.
   const [splitwiseImport, setSplitwiseImport] = useState(false);
+  // Set when Personal asks Shared to split one of its card charges.
+  const [splitFrom, setSplitFrom] = useState<Transaction | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [backend, setBackend] = useState<"connecting" | "ready" | Error>(
     "connecting"
@@ -120,13 +123,26 @@ function App() {
 
       <main className="mx-auto max-w-7xl px-4 py-6">
         {page === "dashboard" && <Dashboard onImport={() => setPage("statements")} onShared={() => setPage("shared")} />}
-        {page === "personal" && <Transactions accounts={accounts} onImport={() => setPage("statements")} />}
+        {page === "personal" && (
+          <Transactions
+            accounts={accounts}
+            onImport={() => setPage("statements")}
+            onSplit={(tx) => {
+              setSplitFrom(tx);
+              setPage("shared");
+              window.scrollTo({ top: 0 });
+            }}
+            onShared={() => setPage("shared")}
+          />
+        )}
         {page === "budgeting" && <Budgets />}
         {page === "shared" && (
           <Shared
-            key={String(splitwiseImport)}
+            key={`${splitwiseImport}-${splitFrom?.id ?? ""}`}
             startImport={splitwiseImport}
             onImportClosed={() => setSplitwiseImport(false)}
+            fromCharge={splitFrom}
+            onChargeUsed={() => setSplitFrom(null)}
             onReconcile={() => setPage("reconcile")}
             onPeople={() => setPage("people")}
           />

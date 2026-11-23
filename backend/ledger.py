@@ -7,6 +7,7 @@ definitions. Statement import writes Transactions itself (statement_import).
 
 import re
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 
@@ -22,6 +23,31 @@ class NotFound(LedgerError):
     pass
 
 
+_open_units: set[int] = set()  # connections inside a unit of work
+
+
+@contextmanager
+def unit_of_work(conn: sqlite3.Connection):
+    """One all-or-nothing write: committed when the block ends, rolled back
+    if it raises. A unit opened inside another joins it, so only the
+    outermost one commits; a refusal anywhere stores nothing."""
+    if id(conn) in _open_units:
+        yield conn
+        return
+    conn.commit()  # end any implicit transaction so BEGIN IMMEDIATE can start one
+    conn.execute("BEGIN IMMEDIATE")
+    _open_units.add(id(conn))
+    try:
+        yield conn
+    except BaseException:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+    finally:
+        _open_units.discard(id(conn))
+
+
 # ── Accounts ────────────────────────────────────────────────────────────────
 
 def accounts(conn: sqlite3.Connection) -> list[dict]:
@@ -35,39 +61,47 @@ def add_account(
 ) -> int:
     if kind not in ACCOUNT_KINDS:
         raise LedgerError(f"Unknown account kind: {kind}")
-    cur = conn.execute(
-        "INSERT INTO accounts (name, kind, bank, last_four, color) VALUES (?, ?, ?, ?, ?)",
-        (name, kind, bank, last_four, color),
-    )
-    conn.commit()
-    return cur.lastrowid
+    with unit_of_work(conn):
+        return conn.execute(
+            "INSERT INTO accounts (name, kind, bank, last_four, color) VALUES (?, ?, ?, ?, ?)",
+            (name, kind, bank, last_four, color),
+        ).lastrowid
 
 
 def delete_account(conn: sqlite3.Connection, account_id: int) -> None:
     """Removes the Account with all its Statements and Transactions."""
-    conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
-    conn.commit()
+    with unit_of_work(conn):
+        conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
 
 
 # ── Statements ──────────────────────────────────────────────────────────────
 
 def statements(conn: sqlite3.Connection) -> list[dict]:
     """Imported Statements, latest billing period first, with how many
-    Transactions each holds."""
+    Transactions each holds and how many of those pay for a Shared Expense."""
     rows = conn.execute(
         """SELECT s.id, s.account_id, s.period_start, s.period_end, s.file_name, s.imported_at,
-                  COUNT(t.id) AS transactions
+                  COUNT(t.id) AS transactions, COUNT(e.id) AS linked_shared
            FROM statements s LEFT JOIN transactions t ON t.statement_id = s.id
+           LEFT JOIN shared_expenses e ON e.transaction_id = t.id
            GROUP BY s.id ORDER BY s.period_end DESC, s.id DESC"""
     )
     return [dict(r) for r in rows]
 
 
-def delete_statement(conn: sqlite3.Connection, statement_id: int) -> None:
-    """Removes the Statement and its Transactions, Overrides included."""
-    if conn.execute("DELETE FROM statements WHERE id = ?", (statement_id,)).rowcount == 0:
-        raise NotFound("Statement not found")
-    conn.commit()
+def delete_statement(conn: sqlite3.Connection, statement_id: int) -> list[dict]:
+    """Removes the Statement and its Transactions, Overrides included.
+    Returns the Shared Expenses its Purchases paid for: they're unlinked, so
+    they wait on Reconcile again (docs/adr/0007)."""
+    with unit_of_work(conn):
+        unlinked = [dict(r) for r in conn.execute(
+            """SELECT e.id, e.date, e.description FROM shared_expenses e
+               JOIN transactions t ON t.id = e.transaction_id WHERE t.statement_id = ?""",
+            (statement_id,),
+        )]
+        if conn.execute("DELETE FROM statements WHERE id = ?", (statement_id,)).rowcount == 0:
+            raise NotFound("Statement not found")
+    return unlinked
 
 
 # ── Transactions ────────────────────────────────────────────────────────────
@@ -81,7 +115,8 @@ class TransactionFilter:
 
 
 def transactions(conn: sqlite3.Connection, where: TransactionFilter = TransactionFilter()) -> list[dict]:
-    """Transactions with their effective kind and Category, newest first."""
+    """Transactions with their effective kind and Category, and the Shared
+    Expense each one pays for, if any; newest first."""
     filters, params = [], []
     if where.account_id is not None:
         filters.append("account_id = ?")
@@ -99,7 +134,9 @@ def transactions(conn: sqlite3.Connection, where: TransactionFilter = Transactio
     rows = conn.execute(
         f"""SELECT id, account_id, statement_id, date, description, amount_cents, direction,
                    effective_kind AS kind, effective_category AS category,
-                   category_confidence, overridden, override_kind, override_category
+                   category_confidence, overridden, override_kind, override_category,
+                   (SELECT e.id FROM shared_expenses e WHERE e.transaction_id = transaction_view.id)
+                       AS shared_expense_id
             FROM transaction_view {clause} ORDER BY date DESC, id DESC""",
         params,
     )
@@ -165,16 +202,16 @@ def set_budget(conn: sqlite3.Connection, category: str, month: str, amount_cents
            ORDER BY from_month DESC LIMIT 1""",
         (category, month),
     ).fetchone()
-    if (before["amount_cents"] if before else None) == amount_cents:
-        # Same as the month before: this month just follows it.
-        conn.execute("DELETE FROM budgets WHERE category = ? AND from_month = ?", (category, month))
-    else:
-        conn.execute(
-            """INSERT INTO budgets (category, from_month, amount_cents) VALUES (?, ?, ?)
-               ON CONFLICT (category, from_month) DO UPDATE SET amount_cents = excluded.amount_cents""",
-            (category, month, amount_cents),
-        )
-    conn.commit()
+    with unit_of_work(conn):
+        if (before["amount_cents"] if before else None) == amount_cents:
+            # Same as the month before: this month just follows it.
+            conn.execute("DELETE FROM budgets WHERE category = ? AND from_month = ?", (category, month))
+        else:
+            conn.execute(
+                """INSERT INTO budgets (category, from_month, amount_cents) VALUES (?, ?, ?)
+                   ON CONFLICT (category, from_month) DO UPDATE SET amount_cents = excluded.amount_cents""",
+                (category, month, amount_cents),
+            )
 
 
 # ── Overrides ───────────────────────────────────────────────────────────────
@@ -199,16 +236,24 @@ def set_override(
 
     predicted, confidence = tx["category"], tx["category_confidence"]
     effective_kind = kind or tx["kind"]
+    if effective_kind != "purchase":
+        # A Link means "this Purchase paid for that Shared Expense"; another kind can't.
+        shared = conn.execute("SELECT description FROM shared_expenses WHERE transaction_id = ?", (tx_id,)).fetchone()
+        if shared:
+            raise LedgerError(
+                f"This Purchase pays for the shared expense \u201c{shared['description']}\u201d. "
+                "Unlink it on Reconcile first."
+            )
     if predicted is None and has_category(effective_kind) and predictor is not None:
         predicted, confidence = predictor.predict(
             tx["description"], tx["amount_cents"], effective_kind, date.fromisoformat(tx["date"])
         )
-    conn.execute(
-        """UPDATE transactions SET override_kind = ?, override_category = ?,
-                                   category = ?, category_confidence = ? WHERE id = ?""",
-        (kind, category, predicted, confidence, tx_id),
-    )
-    conn.commit()
+    with unit_of_work(conn):
+        conn.execute(
+            """UPDATE transactions SET override_kind = ?, override_category = ?,
+                                       category = ?, category_confidence = ? WHERE id = ?""",
+            (kind, category, predicted, confidence, tx_id),
+        )
 
 
 def repredict(conn: sqlite3.Connection, predictor: CategoryPredictor) -> int:
@@ -228,8 +273,8 @@ def repredict(conn: sqlite3.Connection, predictor: CategoryPredictor) -> int:
         for r, (category, confidence) in zip(rows, predictions)
         if (category, confidence) != (r["category"], r["category_confidence"])
     ]
-    conn.executemany("UPDATE transactions SET category = ?, category_confidence = ? WHERE id = ?", changed)
-    conn.commit()
+    with unit_of_work(conn):
+        conn.executemany("UPDATE transactions SET category = ?, category_confidence = ? WHERE id = ?", changed)
     return len(changed)
 
 

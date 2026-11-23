@@ -62,3 +62,19 @@ def test_files_that_are_not_splitwise_exports(conn):
         read_splitwise(b"Date,Description,Amount\n2026-11-02,X,1.00\n")
     with pytest.raises(SplitwiseError, match="no member columns"):
         read_splitwise(b"Date,Description,Category,Cost,Currency\n2026-11-02,X,General,1.00,USD\n")
+
+
+def test_a_failing_row_stores_nothing(conn, monkeypatch):
+    real = sharing.add_expense
+    calls = []
+
+    def fail_on_second(conn, expense):
+        calls.append(expense)
+        if len(calls) == 2:
+            raise sharing.LedgerError("boom")
+        return real(conn, expense)
+
+    monkeypatch.setattr(sharing, "add_expense", fail_on_second)
+    with pytest.raises(sharing.LedgerError, match="boom"):
+        import_splitwise(conn, read_splitwise(EXPORT), your_name="Sam", group_name="Trip")
+    assert (sharing.people(conn), sharing.groups(conn), sharing.expenses(conn)) == ([], [], [])
